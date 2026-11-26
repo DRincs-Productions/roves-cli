@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -6,7 +6,6 @@ import {
     androidSigningEnv,
     buildAndroid,
     buildIos,
-    checkMobilePrerequisites,
     engineCloneCommand,
     iosReleaseArgs,
     iosSigningEnv,
@@ -18,8 +17,16 @@ import {
 import type { CommandSpec } from "../src/process";
 import { dist, readZip, tempDir, write } from "./helpers";
 
-const allTools = () => true;
-const sdkEnv = { ANDROID_HOME: "/opt/android-sdk", JAVA_HOME: "/opt/jdk" };
+/** Every tool "installed" (the JDK answering as Java 17). */
+const allTools = () => 'openjdk version "17.0.1"';
+
+/** An Android SDK folder with the packages the engine needs. */
+async function sdkEnv(root: string): Promise<{ ANDROID_HOME: string }> {
+    for (const dir of ["platform-tools", "platforms/android-37", "build-tools/36.0.0"]) {
+        await mkdir(join(root, dir), { recursive: true });
+    }
+    return { ANDROID_HOME: root };
+}
 
 describe("mach invocation", () => {
     it("runs mach like the engine's own launchers", () => {
@@ -130,21 +137,6 @@ describe("Android arguments", () => {
         ]);
     });
 
-    it("lists every missing prerequisite", () => {
-        const problems = checkMobilePrerequisites("android", {
-            needsGit: true,
-            probe: () => false,
-            env: {},
-        });
-        expect(problems.join("\n")).toMatch(/git/);
-        expect(problems.join("\n")).toMatch(/uv/);
-        expect(problems.join("\n")).toMatch(/JDK/);
-        expect(problems.join("\n")).toMatch(/ANDROID_SDK_ROOT/);
-        expect(
-            checkMobilePrerequisites("android", { needsGit: false, probe: allTools, env: sdkEnv }),
-        ).toEqual([]);
-    });
-
     it("runs bootstrap and mach bundle with the decoded keystore, then zips the output", async () => {
         const tmp = await tempDir();
         const content = await dist(join(tmp, "dist"));
@@ -163,7 +155,7 @@ describe("Android arguments", () => {
             keyAlias: "alias",
             keyPassword: "kp",
             host: "linux",
-            env: sdkEnv,
+            env: await sdkEnv(join(tmp, "sdk")),
             probe: allTools,
             runner: async (spec) => {
                 calls.push(spec);
@@ -184,7 +176,8 @@ describe("Android arguments", () => {
             APK_SIGNING_KEY_STORE_PASS: "sp",
             APK_SIGNING_KEY_ALIAS: "alias",
             APK_SIGNING_KEY_PASS: "kp",
-            ANDROID_SDK_ROOT: "/opt/android-sdk",
+            ANDROID_SDK_ROOT: join(tmp, "sdk"),
+            ANDROID_HOME: join(tmp, "sdk"),
         });
         expect(keystoreBytes).toBe("KEYSTORE");
         // The decoded keystore is removed afterwards.
@@ -208,8 +201,8 @@ describe("Android arguments", () => {
             outDir: join(tmp, "out"),
             bootstrap: false,
             host: "linux",
-            env: sdkEnv,
-            probe: (command) => command !== "rustup",
+            env: await sdkEnv(join(tmp, "sdk")),
+            probe: (command) => (command === "rustup" ? undefined : 'openjdk version "17.0.1"'),
             runner: async (spec) => {
                 calls.push(spec);
                 await write(join(tmp, "out", "roves-game"), "app-debug.apk", "apk");
@@ -218,8 +211,15 @@ describe("Android arguments", () => {
         expect(calls).toHaveLength(1);
         expect(calls[0]?.args).not.toContain("--android-release");
         await expect(
-            buildAndroid({ contentDir: content, engineDir: engine, probe: () => false, env: {} }),
-        ).rejects.toThrow(/Android prerequisites missing/);
+            buildAndroid({
+                contentDir: content,
+                engineDir: engine,
+                install: false,
+                cacheDir: join(tmp, "cache"),
+                probe: () => undefined,
+                env: {},
+            }),
+        ).rejects.toThrow(/Android toolchain incomplete[\s\S]*JDK 17[\s\S]*Android SDK[\s\S]*uv/);
     });
 });
 

@@ -20,6 +20,14 @@ it here too (and the other way round), and update the tests.
   Bump it on every engine release that changes the desktop player, then release the CLI.
 - `MOBILE_ENGINE_VERSION` in `src/constants.ts` (`v0.7.15`): an engine tag that still has
   `mach bundle --android`/`--ios` and `support/ios/bundle.py`. Do not move it without checking.
+- Mobile toolchains in `src/toolchains.ts`, mirroring roves-action's install steps: JDK major
+  (Temurin 17, Adoptium API checksum), Android cmdline-tools revision and the SHA-256 of each
+  archive (verify the files against the SHA-1/size in Google's `repository2-3.xml` before
+  pinning), compileSdk/build-tools (the engine's `build.gradle.kts` at the mobile pin), uv and
+  XcodeGen versions with their SHA-256. Change them together with roves-action. Installs go to
+  `<cache>/toolchains`, are atomic (staging folder + `.roves-complete` marker), never need admin
+  rights and never touch the user's global environment. Tests mock `Net`, the probes and the
+  command runners: no real download in Vitest.
 
 ## Conventions
 

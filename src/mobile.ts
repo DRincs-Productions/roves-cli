@@ -2,17 +2,20 @@
  * Android and iOS: the native WebView path of the Servo-era engine at the MOBILE pin
  * (`MOBILE_ENGINE_VERSION`), exactly as roves-action runs it: `mach bundle --android`, or for
  * iOS `support/ios/bundle.py` + XcodeGen + an unsigned Simulator build, or `mach bundle --ios
- * --ios-release`. Nothing is compiled, but the external toolchains (uv, a JDK and the Android
- * SDK, or Xcode and XcodeGen) must be installed; they are checked before anything runs.
+ * --ios-release`. Nothing is compiled. The external toolchains (a JDK, the Android SDK and uv,
+ * or XcodeGen and uv) are reused when present and otherwise installed into the cache
+ * (`toolchains.ts`); only Xcode itself must already be installed.
  */
-import { cp, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { ENGINE_REPOSITORY, MOBILE_ENGINE_VERSION, validateName } from "./constants";
 import { DEFAULT_NAME } from "./desktop";
 import { defaultCacheDir } from "./download";
 import { RovesError } from "./errors";
+import { defaultNet, extractArchive, type Net, progressLog } from "./net";
 import {
+    type CommandCapture,
     type CommandProbe,
     type CommandRunner,
     type CommandSpec,
@@ -20,6 +23,7 @@ import {
     probeCommand,
     runCommand,
 } from "./process";
+import { prepareAndroidToolchain, prepareIosToolchain, type Toolchain } from "./toolchains";
 import { zipDirectory } from "./zip";
 
 /** Web app manifest `orientation` vocabulary, accepted by `--android-orientation`. */
@@ -49,11 +53,18 @@ interface CommonMobileOptions {
     log?: (message: string) => void;
     /** Replaces command execution (tests). */
     runner?: CommandRunner;
-    /** Replaces the prerequisite probes (tests). */
+    /** Install missing toolchains into the cache (default true); false: fail listing them. */
+    install?: boolean;
+    /** Replaces command output capture (tests). */
+    capture?: CommandCapture;
+    /** Replaces the tool detection probes (tests). */
     probe?: CommandProbe;
-    /** Host OS (tests). */
+    /** Replaces network access (tests). */
+    net?: Net;
+    /** Host OS and CPU (tests). */
     host?: NodeJS.Platform;
-    /** Environment used for the prerequisite checks (tests). */
+    arch?: string;
+    /** Environment existing tools are looked up in (tests). */
     env?: NodeJS.ProcessEnv;
 }
 
@@ -93,6 +104,8 @@ export interface IosOptions extends CommonMobileOptions {
 
 export interface MobileBundleResult {
     platform: "android" | "ios";
+    /** The tools used (reused from the system, the cache, or installed now). */
+    tools?: Toolchain["tools"];
     /** Absolute path of the output folder (named `name`). */
     bundleDir: string;
     /** Absolute path of `<name>.zip`, which holds that folder. */
@@ -105,10 +118,11 @@ export function machCommand(
     engineDir: string,
     args: string[],
     host: NodeJS.Platform = process.platform,
+    uv = "uv",
 ): CommandSpec {
     return host === "win32"
         ? {
-              command: "uv",
+              command: uv,
               args: ["run", "--frozen", "python", join(engineDir, "mach"), ...args],
               cwd: engineDir,
           }
@@ -316,54 +330,10 @@ export async function validateIosOptions(options: IosOptions): Promise<string[]>
     return warnings;
 }
 
-/** Missing tools for a mobile build, as human-readable problems (empty: ready). */
-export function checkMobilePrerequisites(
-    platform: "android" | "ios",
-    options: {
-        needsGit: boolean;
-        release?: boolean;
-        probe?: CommandProbe;
-        env?: NodeJS.ProcessEnv;
-    },
-): string[] {
-    const probe = options.probe ?? probeCommand;
-    const env = options.env ?? process.env;
-    const problems: string[] = [];
-    if (options.needsGit && !probe("git", ["--version"])) {
-        problems.push("git is not installed (needed to clone the engine; or pass --engine-dir)");
-    }
-    const needsMach = platform === "android" || options.release;
-    if (needsMach && !probe("uv", ["--version"])) {
-        problems.push(
-            "uv is not installed (the engine's mach runs through it): https://docs.astral.sh/uv/",
-        );
-    }
-    if (platform === "android") {
-        const javaHome = env.JAVA_HOME;
-        const java = javaHome ? join(javaHome, "bin", "java") : "java";
-        if (!probe(java, ["-version"])) {
-            problems.push("no JDK found (install a JDK 17, e.g. Temurin, and set JAVA_HOME)");
-        }
-        if (!env.ANDROID_SDK_ROOT && !env.ANDROID_HOME) {
-            problems.push(
-                'ANDROID_SDK_ROOT/ANDROID_HOME is not set (install the Android SDK cmdline-tools, then `sdkmanager "platform-tools" "platforms;android-37" "build-tools;36.0.0"`)',
-            );
-        }
-    } else {
-        if (!probe("python3", ["--version"])) problems.push("python3 is not installed");
-        if (!options.release && !probe("xcodegen", ["--version"])) {
-            problems.push("XcodeGen is not installed (brew install xcodegen)");
-        }
-        if (!probe("xcodebuild", ["-version"])) {
-            problems.push("Xcode is not installed (xcodebuild not found)");
-        }
-    }
-    return problems;
-}
-
 /**
  * The engine source at `version`: `engineDir` when given (it must contain `mach`), else a
- * cached shallow clone in `<cacheDir>/engine/<version>`.
+ * cached shallow clone in `<cacheDir>/engine/<version>`, or, without git, the tag's source
+ * archive from GitHub (`mach bundle` does not need the git history).
  */
 export async function ensureEngineSource(options: {
     engineDir?: string;
@@ -371,6 +341,9 @@ export async function ensureEngineSource(options: {
     cacheDir?: string;
     runner?: CommandRunner;
     log?: (message: string) => void;
+    /** Whether git is available (default true). */
+    git?: boolean;
+    net?: Net;
 }): Promise<string> {
     if (options.engineDir) {
         const dir = resolve(options.engineDir);
@@ -388,10 +361,31 @@ export async function ensureEngineSource(options: {
     }
     await rm(dir, { recursive: true, force: true });
     await mkdir(join(dir, ".."), { recursive: true });
-    options.log?.(`Cloning ${ENGINE_REPOSITORY} at ${version} into ${dir}`);
-    await (options.runner ?? runCommand)(engineCloneCommand(version, dir));
+    if (options.git ?? true) {
+        options.log?.(`Cloning ${ENGINE_REPOSITORY} at ${version} into ${dir}`);
+        await (options.runner ?? runCommand)(engineCloneCommand(version, dir));
+    } else {
+        const url = engineArchiveUrl(version);
+        const log = options.log ?? (() => {});
+        const staging = `${dir}.partial`;
+        await rm(staging, { recursive: true, force: true });
+        await mkdir(staging, { recursive: true });
+        const archive = join(staging, "source.tar.gz");
+        log(`git not found: downloading ${url}`);
+        await (options.net ?? defaultNet).download(url, archive, progressLog(log, "engine source"));
+        await extractArchive(archive, join(staging, "content"));
+        const [top] = await readdir(join(staging, "content"));
+        if (!top) throw new RovesError(`${url} is empty`);
+        await rename(join(staging, "content", top), dir);
+        await rm(staging, { recursive: true, force: true });
+    }
     await writeFile(marker, version);
     return dir;
+}
+
+/** GitHub's source archive of an engine tag (used when git is not installed). */
+export function engineArchiveUrl(version: string): string {
+    return `${ENGINE_REPOSITORY}/archive/refs/tags/${version}.tar.gz`;
 }
 
 export function engineCloneCommand(version: string, dir: string): CommandSpec {
@@ -451,32 +445,26 @@ export async function buildAndroid(options: AndroidOptions): Promise<MobileBundl
     const run = options.runner ?? runCommand;
     const host = options.host ?? process.platform;
     for (const warning of await validateAndroidOptions(options)) log(`android: ${warning}`);
-    const problems = checkMobilePrerequisites("android", {
-        needsGit: !options.engineDir,
-        probe: options.probe,
-        env: options.env,
-    });
-    if (problems.length > 0) {
-        throw new RovesError(`Android prerequisites missing:\n  - ${problems.join("\n  - ")}`);
-    }
+    const toolchain = await prepareAndroidToolchain({ ...options, runner: run, log });
     const engineDir = await ensureEngineSource({
         ...options,
         version: options.engineVersion,
         runner: run,
         log,
+        git: toolchain.git,
     });
     const paths = await prepareOutput(options);
-    const env = options.env ?? process.env;
-    const sdk = env.ANDROID_SDK_ROOT || env.ANDROID_HOME || "";
-    const sdkEnv = { ANDROID_SDK_ROOT: sdk, ANDROID_HOME: sdk };
+    const toolEnv = toolchain.env;
     const probe = options.probe ?? probeCommand;
+    // roves-action prefetches the engine's Rust toolchain; mach bundle compiles nothing, so this
+    // runs only when rustup is already installed (mach bootstrap skips Rust without it too).
     if (probe("rustup", ["--version"])) {
         await run({ command: "rustup", args: ["show"], cwd: engineDir });
     }
     if (options.bootstrap ?? true) {
-        const spec = machCommand(engineDir, machBootstrapArgs(host), host);
+        const spec = machCommand(engineDir, machBootstrapArgs(host), host, toolchain.uv);
         log(`android: ${formatCommand(spec)}`);
-        await run({ ...spec, env: sdkEnv });
+        await run({ ...spec, env: toolEnv });
     }
     const secrets = await mkdtemp(join(tmpdir(), "roves-android-"));
     try {
@@ -504,13 +492,14 @@ export async function buildAndroid(options: AndroidOptions): Promise<MobileBundl
                 release: options.release,
             }),
             host,
+            toolchain.uv,
         );
         log(`android: ${formatCommand(spec)}`);
-        await run({ ...spec, env: { ...sdkEnv, ...signingEnv } });
+        await run({ ...spec, env: { ...toolEnv, ...signingEnv } });
     } finally {
         await rm(secrets, { recursive: true, force: true });
     }
-    return finish("android", paths, engineDir, log);
+    return { ...(await finish("android", paths, engineDir, log)), tools: toolchain.tools };
 }
 
 /**
@@ -522,35 +511,35 @@ export async function buildIos(options: IosOptions): Promise<MobileBundleResult>
     const run = options.runner ?? runCommand;
     const host = options.host ?? process.platform;
     for (const warning of await validateIosOptions(options)) log(`ios: ${warning}`);
-    const problems = checkMobilePrerequisites("ios", {
-        needsGit: !options.engineDir,
-        release: options.release,
-        probe: options.probe,
-        env: options.env,
-    });
-    if (problems.length > 0) {
-        throw new RovesError(`iOS prerequisites missing:\n  - ${problems.join("\n  - ")}`);
-    }
+    const toolchain = await prepareIosToolchain({ ...options, runner: run, log });
     const engineDir = await ensureEngineSource({
         ...options,
         version: options.engineVersion,
         runner: run,
         log,
+        git: toolchain.git,
     });
+    const toolEnv = toolchain.env;
+    const [python = "python3", ...pythonArgs] = toolchain.python ?? ["python3"];
     const paths = await prepareOutput(options);
     if (!options.release) {
         await run({
-            command: "python3",
-            args: iosBundlePyArgs({
-                engineDir,
-                contentDir: paths.contentDir,
-                output: paths.output,
-                appName: options.appName,
-                bundleId: options.bundleId,
-            }),
+            command: python,
+            env: toolEnv,
+            args: [
+                ...pythonArgs,
+                ...iosBundlePyArgs({
+                    engineDir,
+                    contentDir: paths.contentDir,
+                    output: paths.output,
+                    appName: options.appName,
+                    bundleId: options.bundleId,
+                }),
+            ],
         });
         await run({
-            command: "xcodegen",
+            command: toolchain.xcodegen ?? "xcodegen",
+            env: toolEnv,
             args: ["generate", "--spec", "project.json"],
             cwd: paths.output,
         });
@@ -558,6 +547,7 @@ export async function buildIos(options: IosOptions): Promise<MobileBundleResult>
         try {
             await run({
                 command: "xcodebuild",
+                env: toolEnv,
                 args: iosSimulatorBuildArgs(buildDir),
                 cwd: paths.output,
             });
@@ -574,7 +564,7 @@ export async function buildIos(options: IosOptions): Promise<MobileBundleResult>
         } finally {
             await rm(buildDir, { recursive: true, force: true });
         }
-        return finish("ios", paths, engineDir, log);
+        return { ...(await finish("ios", paths, engineDir, log)), tools: toolchain.tools };
     }
     const secrets = await mkdtemp(join(tmpdir(), "roves-ios-"));
     try {
@@ -597,21 +587,25 @@ export async function buildIos(options: IosOptions): Promise<MobileBundleResult>
                 bundleId: options.bundleId,
             }),
             host,
+            toolchain.uv,
         );
         log(`ios: ${formatCommand(spec)}`);
         await run({
             ...spec,
-            env: iosSigningEnv({
-                certificateP12Path,
-                certificateP12Password: options.certificateP12Password,
-                provisioningProfilePath,
-                teamId: options.teamId ?? "",
-            }),
+            env: {
+                ...toolEnv,
+                ...iosSigningEnv({
+                    certificateP12Path,
+                    certificateP12Password: options.certificateP12Password,
+                    provisioningProfilePath,
+                    teamId: options.teamId ?? "",
+                }),
+            },
         });
     } finally {
         await rm(secrets, { recursive: true, force: true });
     }
-    return finish("ios", paths, engineDir, log);
+    return { ...(await finish("ios", paths, engineDir, log)), tools: toolchain.tools };
 }
 
 /** The first `*.app` at most two levels below `dir` (like `find -maxdepth 2 -iname '*.app'`). */
