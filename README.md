@@ -109,8 +109,8 @@ release uses that pin unless `--shell-version` overrides it. Android/iOS use the
 `v0.7.15`.
 
 The full reference, with every option and the common errors, is the agent skill in
-[`skills/core/SKILL.md`](skills/core/SKILL.md) (installable with `npx skills add
-DRincs-Productions/roves-cli`).
+[`skills/core/SKILL.md`](https://github.com/DRincs-Productions/roves/blob/main/skills/core/SKILL.md)
+in the Roves engine repository (installable with `npx skills add DRincs-Productions/roves`).
 
 ## Programmatic API
 
@@ -143,7 +143,6 @@ npm run build            # tsup -> dist/ (cli.mjs with shebang, index.mjs, index
 npm run check            # Biome lint + format check (npm run format to fix formatting)
 npm run typecheck        # tsc --noEmit
 npm test -- --run        # Vitest (synthetic player zips, no network)
-npm run skills:validate  # validates skills/*/SKILL.md
 node dist/cli.mjs --help
 ```
 

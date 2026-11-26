@@ -28,9 +28,7 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist",
-    "skills",
-    "categories.json"
+    "dist"
   ],
   "engines": {
     "node": ">=20.19.0"
@@ -45,8 +43,7 @@
     "check": "biome check",
     "format": "biome format --write",
     "test": "vitest",
-    "typecheck": "tsc --noEmit",
-    "skills:validate": "node scripts/validate-skills.mjs"
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "roves",

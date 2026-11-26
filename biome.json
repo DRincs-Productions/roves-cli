@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!!**/dist", "!categories.json", "!.github", "!skills"]
+    "includes": ["**", "!!**/dist", "!.github"]
   },
   "formatter": {
     "enabled": true,

@@ -28,14 +28,14 @@ it here too (and the other way round), and update the tests.
 - Expected failures throw `RovesError` (printed without a stack by the CLI).
 - Logs go to stderr, results to stdout.
 - Before finishing: `npm run build`, `npm run check` (Biome; fix findings), `npm run typecheck`,
-  `npm test -- --run`, `npm run skills:validate`.
+  `npm test -- --run`.
 - Tests use synthetic player zips (`tests/helpers.ts`), never the network. Add tests for every
   behavior change.
-- Keep `README.md` and `skills/core/SKILL.md` accurate for every command and option.
+- Keep `README.md` and the agent skill `skills/core/SKILL.md` in the Roves engine repository
+  (DRincs-Productions/roves) accurate for every command and option.
 
 ## CI
 
 - `Test: build, lint and unit tests` (`.github/workflows/test.yml`): every push, Windows only.
 - `Release` (`.github/workflows/npm-publish.yml`): on `v*` tags; Linux tests on Node
   20.19/22.18/24, npm publish (`NPM_TOKEN` secret), GitHub Release. Linux/macOS CI runs only here.
-- `Validate Agent Skills`: copied unchanged from the DRincs library template.
