@@ -41,27 +41,29 @@ roves bundle -c dist --icon-png icon.png --icon-ico icon.ico
 roves bundle -c dist -p linux --json                   # machine-readable result
 ```
 
-| Option                      | Description                                                                             |
-| --------------------------- | --------------------------------------------------------------------------------------- |
-| `-c, --content-dir <dir>`   | Built web game with `index.html` at its root (required).                                |
-| `-p, --platform <platform>` | `windows`, `macos`, `linux`; repeatable or comma separated. Default: host.              |
-| `--icon-png <file>`         | Square PNG project icon (16-2048 px, at most 8 MiB). Default: `<content-dir>/icon.png`. |
-| `--icon-ico <file>`         | `.ico` for `play.exe`. Default: generated from the PNG, else `icon.ico`/`favicon.ico`.  |
-| `--steam`                   | Steam variant (Steamworks redistributable next to the executable).                      |
-| `--steam-app-id <id>`       | Writes `steam_appid.txt` next to the executable (development). Requires `--steam`.      |
-| `--enable-mcp`              | MCP-enabled development player. Not with `--steam`.                                     |
-| `-n, --name <name>`         | Zip/folder base name (default `roves-game`).                                            |
-| `-o, --out-dir <dir>`       | Output directory (default `.`).                                                         |
-| `--no-extract`              | Only the zip, no unzipped folder.                                                       |
-| `--shell-version <tag>`     | Engine release of the player (default: pinned, see below).                              |
-| `--shell-zip <file>`        | Local player zip instead of a download (one platform).                                  |
-| `--no-cache` / `--refresh`  | Skip the cache / re-download.                                                           |
-| `--json`                    | JSON results on stdout.                                                                 |
+| Option                      | Description                                                                                                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-c, --content-dir <dir>`   | Built web game with `index.html` at its root (required).                                                                                                      |
+| `-p, --platform <platform>` | `windows`, `macos`, `linux`; repeatable or comma separated. Default: host.                                                                                    |
+| `--icon-png <file>`         | Square PNG project icon (16-2048 px, at most 8 MiB). Default: `<content-dir>/icon.png`.                                                                       |
+| `--icon-ico <file>`         | `.ico` for `play.exe`. Default: generated from the PNG, else `icon.ico`/`favicon.ico`.                                                                        |
+| `--steam`                   | Steam variant (Steamworks redistributable next to the executable).                                                                                            |
+| `--steam-app-id <id>`       | Writes `steam_appid.txt` next to the executable (development). Requires `--steam`.                                                                            |
+| `--enable-mcp`              | MCP-enabled development player. Not with `--steam`.                                                                                                           |
+| `-n, --name <name>`         | Zip/folder base name (default `roves-game`).                                                                                                                  |
+| `-o, --out-dir <dir>`       | Output directory (default `.`).                                                                                                                               |
+| `--no-extract`              | Only the zip, no unzipped folder.                                                                                                                             |
+| `--shell-version <tag>`     | Engine release of the player (default: pinned, see below).                                                                                                    |
+| `--shell-zip <file>`        | Local player zip instead of a download (one platform).                                                                                                        |
+| `--no-cache` / `--refresh`  | Skip the cache / re-download.                                                                                                                                 |
+| `--json`                    | JSON results on stdout.                                                                                                                                       |
+| `--progress <format>`       | `plain` (default; download percentages on a terminal) or `json`: one `{"type":"progress","platform","stage","fraction"}` line per event on stderr, for tools. |
 
 Outputs: one platform gives `<name>.zip` (one `<name>/` folder inside, or `<name>.app/` at the
 root on macOS) and the unzipped `<name>/` (`<name>.app`); several platforms give
 `<name>_<platform>.zip` and `<name>_<platform>/`. Each result reports `archive-path`,
-`bundle-dir`, `mcp-enabled` and `icon-source`, like roves-action's outputs.
+`bundle-dir`, `mcp-enabled` and `icon-source`, like roves-action's outputs (`--json` adds
+`topFolder`, `executable`, `asset`, `base`, `shellVersion` and `warnings`).
 
 Windows packages are verified against the player's `SHA256SUMS.txt` and get a regenerated one
 plus a "game replaced" note in `PROVENANCE.txt`; `play.exe`'s icon is patched in pure JS.
@@ -128,6 +130,21 @@ The full reference, with every option and the common errors, is the agent skill 
 [`skills/core/SKILL.md`](https://github.com/DRincs-Productions/roves/blob/main/skills/core/SKILL.md)
 in the Roves engine repository (installable with `npx skills add DRincs-Productions/roves`).
 
+## Standalone executable
+
+Every GitHub Release of roves-cli also attaches `roves-<target-triple>[.exe]`
+(`x86_64-pc-windows-msvc`, `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`): the CLI as a
+single executable with Node.js inside (a Node.js
+[Single Executable Application](https://nodejs.org/api/single-executable-applications.html),
+about 85 MB), so it runs where Node.js is not installed. Roves Packmaster bundles it as its
+Tauri sidecar. It behaves exactly like `roves`:
+
+```bash
+./roves-x86_64-unknown-linux-gnu bundle -c dist -p linux --json
+```
+
+The binaries are not code-signed (macOS: ad hoc signature only).
+
 ## Programmatic API
 
 ```ts
@@ -160,7 +177,15 @@ npm run check            # Biome lint + format check (npm run format to fix form
 npm run typecheck        # tsc --noEmit
 npm test -- --run        # Vitest (synthetic player zips, no network)
 node dist/cli.mjs --help
+npm run build:sea        # standalone executable for this host: dist-sea/roves-<target-triple>[.exe]
 ```
+
+`build:sea` (`scripts/build-sea.mjs`) bundles the CLI and all its dependencies into one CommonJS
+file (`tsup.sea.config.ts`, entry `src/sea.ts`), makes a SEA blob with
+`node --experimental-sea-config` and injects it into a copy of the running `node` with postject
+(macOS: signature removed and re-added ad hoc). The executable embeds the Node.js that ran the
+script; the Release workflow uses Node.js 22 LTS. On Windows postject warns that the copied
+`node.exe` signature is now invalid: expected.
 
 CI: `Test: build, lint and unit tests` runs on every push on Windows only; Linux and macOS run at
 release time in the `Release` workflow. `Validate Agent Skills` checks the skill on every push.
@@ -169,7 +194,8 @@ release time in the `Release` workflow. `Validate Agent Skills` checks the skill
 
 Bump `version` in `package.json`, commit, then push a tag `v<version>` (e.g. `v0.1.0`). The
 `Release` workflow tests on Node 20.19/22.18/24, publishes to npm (needs the `NPM_TOKEN`
-repository secret) and creates a GitHub Release.
+repository secret), creates a GitHub Release and attaches the standalone executables for
+Windows (x64), macOS (arm64) and Linux (x64).
 
 When the engine publishes a new desktop player release, bump `src/shell-version.txt` and release
 the CLI.

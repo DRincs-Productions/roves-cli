@@ -33,3 +33,10 @@ jobs:
           node dist/cli.mjs --version
           node dist/cli.mjs bundle --help > /dev/null
           npm pack --dry-run
+      - name: Standalone executable smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build:sea
+          dist-sea/roves-x86_64-pc-windows-msvc.exe --version
+          dist-sea/roves-x86_64-pc-windows-msvc.exe bundle --help > /dev/null

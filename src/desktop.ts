@@ -24,6 +24,9 @@ import { extractZip } from "./zip";
 
 export const DEFAULT_NAME = "roves-game";
 
+/** Stages of one platform's packaging, in order. */
+export type DesktopStage = "downloading" | "assembling" | "extracting" | "done";
+
 export interface BundleDesktopOptions {
     /** The built web game, with `index.html` at its root. */
     contentDir: string;
@@ -56,6 +59,8 @@ export interface BundleDesktopOptions {
     baseUrl?: string;
     log?: (message: string) => void;
     onProgress?: (platform: DesktopPlatform, progress: DownloadProgress) => void;
+    /** Called when a platform enters a stage (for progress bars, e.g. Roves Packmaster's). */
+    onStage?: (platform: DesktopPlatform, stage: DesktopStage) => void;
     /** Overrides how `play.exe`'s icon is patched (tests). */
     patchExe?: (exe: string, ico: string) => Promise<void>;
 }
@@ -73,6 +78,9 @@ export interface DesktopBundleResult {
     bundleDir?: string;
     /** Top-level entry of the zip. */
     topFolder: string;
+    /** The player executable, relative to the package root (`play.exe`, the macOS
+     * `Contents/MacOS/<CFBundleExecutable>`, the Linux player), e.g. for installers. */
+    executable: string;
     mcpEnabled: boolean;
     /** Where the icons came from, e.g. `window project (game icon.png 512x512); executable ...`. */
     iconSource: string;
@@ -163,7 +171,9 @@ async function bundleOne(
     const topFolder = platform === "macos" ? `${options.name}.app` : options.name;
     const archivePath = join(outDir, `${stem}.zip`);
     const bundleDir = join(outDir, platform === "macos" ? `${stem}.app` : stem);
+    const stage = (name: DesktopStage) => options.onStage?.(platform, name);
 
+    stage("downloading");
     const shell = options.shellZip
         ? {
               path: resolve(options.shellZip),
@@ -182,6 +192,7 @@ async function bundleOne(
     const work = await mkdtemp(join(tmpdir(), `roves-${platform}-`));
     let base: PlayerBase | undefined;
     try {
+        stage("assembling");
         base = await PlayerBase.open(shell.path, platform, steam);
         log(
             `${platform}: base ${asset} checked${base.checksums ? ` against its SHA256SUMS.txt (${base.checksums.size} files)` : ""}`,
@@ -219,6 +230,7 @@ async function bundleOne(
         const warnings = [...icon.warnings];
         let extracted: string | undefined;
         if (options.extract ?? true) {
+            stage("extracting");
             const staging = `${bundleDir}.extracting`;
             await rm(staging, { recursive: true, force: true });
             await rm(bundleDir, { recursive: true, force: true });
@@ -233,6 +245,7 @@ async function bundleOne(
             extracted = bundleDir;
             log(`${platform}: unzipped to ${bundleDir}`);
         }
+        stage("done");
         return {
             platform,
             asset,
@@ -241,6 +254,7 @@ async function bundleOne(
             archivePath,
             bundleDir: extracted,
             topFolder,
+            executable: base.executable,
             mcpEnabled: mcp,
             iconSource: icon.summary,
             warnings,

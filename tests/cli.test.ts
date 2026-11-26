@@ -82,6 +82,37 @@ function capture(overrides: Partial<CliDependencies> = {}) {
 const argv = (...args: string[]) => ["node", "roves", ...args];
 
 describe("command line", () => {
+    it("--progress json writes one JSON line per stage and download percent on stderr", async () => {
+        const { deps, err } = capture({
+            bundleDesktop: async (options) => {
+                options.onStage?.("linux", "downloading");
+                options.onProgress?.("linux", { received: 50, total: 200 });
+                options.onProgress?.("linux", { received: 51, total: 200 });
+                options.onProgress?.("linux", { received: 200, total: 200 });
+                options.onStage?.("linux", "assembling");
+                options.onStage?.("linux", "done");
+                return [];
+            },
+        });
+        expect(
+            await runCli(argv("bundle", "-c", "dist", "-p", "linux", "--progress", "json"), deps),
+        ).toBe(0);
+        const events = err
+            .join("")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+        expect(events).toEqual([
+            { type: "progress", platform: "linux", stage: "downloading", fraction: 0 },
+            { type: "progress", platform: "linux", stage: "downloading", fraction: 0.25 },
+            { type: "progress", platform: "linux", stage: "downloading", fraction: 1 },
+            { type: "progress", platform: "linux", stage: "assembling", fraction: 0 },
+            { type: "progress", platform: "linux", stage: "done", fraction: 1 },
+        ]);
+        const bad = capture();
+        expect(await runCli(argv("bundle", "-c", "dist", "--progress", "xml"), bad.deps)).toBe(1);
+    });
+
     it("maps bundle options to bundleDesktop", async () => {
         let received: Parameters<typeof bundleDesktop>[0] | undefined;
         const { deps, out } = capture({
@@ -303,6 +334,7 @@ describe("bundleDesktop end to end (local --shell-zip)", () => {
             extract: false,
         });
         expect(mac?.topFolder).toBe("My Game.app");
+        expect(mac?.executable).toBe("Contents/MacOS/roves-cef-macos-gate");
         expect(mac?.bundleDir).toBeUndefined();
         const zip = await readZip(mac?.archivePath as string);
         expect(fileNames(zip).every((name) => name.startsWith("My Game.app/Contents/"))).toBe(true);

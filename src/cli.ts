@@ -43,6 +43,19 @@ function collect(value: string, previous: string[] = []): string[] {
     return [...previous, value];
 }
 
+/** Download fractions for `--progress json`, at most one per percent. */
+function jsonDownloadProgress(emit: (fraction: number) => void) {
+    let last = -1;
+    return (progress: DownloadProgress) => {
+        if (progress.total === 0) return;
+        const percent = Math.floor((progress.received / progress.total) * 100);
+        if (percent !== last) {
+            last = percent;
+            emit(percent / 100);
+        }
+    };
+}
+
 /** Download progress on an interactive terminal: one line per 10%. */
 function progressLogger(stderr: (text: string) => void, label: string) {
     let last = -1;
@@ -120,12 +133,27 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
         .option("--no-cache", "download into a temporary directory instead of the cache")
         .option("--refresh", "download again even if the player is cached")
         .option("--json", "print the results as JSON")
+        .addOption(
+            new Option(
+                "--progress <format>",
+                "progress on stderr: plain (download percentages on a terminal) or json (one JSON line per event, for tools)",
+            )
+                .choices(["plain", "json"])
+                .default("plain"),
+        )
         .action(async (options) => {
             const platforms = parsePlatforms(options.platform);
+            const jsonProgress = options.progress === "json";
+            const event = (value: Record<string, unknown>) =>
+                deps.stderr(`${JSON.stringify({ type: "progress", ...value })}\n`);
             const progress = new Map(
                 platforms.map((platform) => [
                     platform,
-                    progressLogger(deps.stderr, `${platform}: download`),
+                    jsonProgress
+                        ? jsonDownloadProgress((fraction) =>
+                              event({ platform, stage: "downloading", fraction }),
+                          )
+                        : progressLogger(deps.stderr, `${platform}: download`),
                 ]),
             );
             const results = await deps.bundleDesktop({
@@ -145,6 +173,10 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
                 refresh: Boolean(options.refresh),
                 log,
                 onProgress: (platform, value) => progress.get(platform)?.(value),
+                onStage: jsonProgress
+                    ? (platform, stage) =>
+                          event({ platform, stage, fraction: stage === "done" ? 1 : 0 })
+                    : undefined,
             });
             if (options.json) {
                 deps.stdout(`${JSON.stringify(results, null, 2)}\n`);

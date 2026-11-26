@@ -46,6 +46,7 @@ export {
     bundleDesktop,
     DEFAULT_NAME,
     type DesktopBundleResult,
+    type DesktopStage,
     validateDesktopOptions,
 } from "./desktop";
 export {

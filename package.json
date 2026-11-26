@@ -1,7 +1,7 @@
 {
   "name": "@drincs/roves-cli",
   "description": "Command-line tool and Node.js API that package a built web game as a native Roves app (CEF player on Windows/macOS/Linux, WebView on Android/iOS).",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "license": "MPL-2.0",
   "author": "DRincs Productions",
@@ -43,7 +43,8 @@
     "check": "biome check",
     "format": "biome format --write",
     "test": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:sea": "node scripts/build-sea.mjs"
   },
   "keywords": [
     "roves",
@@ -76,6 +77,7 @@
     "@types/plist": "^3.0.5",
     "@types/yauzl": "^3.4.0",
     "@types/yazl": "^3.3.1",
+    "postject": "^1.0.0-alpha.6",
     "tsup": "^9.0.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.12"

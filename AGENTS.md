@@ -43,4 +43,17 @@ it here too (and the other way round), and update the tests.
 
 - `Test: build, lint and unit tests` (`.github/workflows/test.yml`): every push, Windows only.
 - `Release` (`.github/workflows/npm-publish.yml`): on `v*` tags; Linux tests on Node
-  20.19/22.18/24, npm publish (`NPM_TOKEN` secret), GitHub Release. Linux/macOS CI runs only here.
+  20.19/22.18/24, npm publish (`NPM_TOKEN` secret), GitHub Release, then the `standalone` job
+  builds `roves-<target-triple>[.exe]` on Windows, macOS and Linux (Node.js 22) and attaches it
+  to the release. Linux/macOS CI runs only here.
+
+## Standalone executable (Packmaster sidecar)
+
+`npm run build:sea` makes the Node.js Single Executable Application (`src/sea.ts`,
+`tsup.sea.config.ts`, `scripts/build-sea.mjs`). The SEA runs one CommonJS file that may only
+`require()` built-in modules: keep every dependency bundleable into CommonJS, avoid
+`import.meta`, top-level await and runtime file loading (assets are inlined, e.g. the `.txt`
+pin), and resolve optional requires at build time (see the `supports-color` stub). Roves
+Packmaster bundles the executable as its Tauri sidecar and parses `bundle --json` and
+`--progress json`: changing those outputs or `bundle`'s options needs a matching change in
+Packmaster's `src-tauri/src/roves_cli.rs`.

@@ -58,3 +58,34 @@ jobs:
         with:
           body: |
             Release ${{ github.ref }}
+
+  # Standalone executables (Node.js Single Executable Applications, `npm run build:sea`), named
+  # with the Rust target triple Tauri sidecars use, attached to the GitHub Release so Roves
+  # Packmaster's CI downloads them by version. Built with Node.js 22 LTS, which they embed.
+  standalone:
+    name: Standalone executable (${{ matrix.os }})
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build:sea
+      - name: Smoke test and upload
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          exe="$(ls dist-sea/roves-*-*)"
+          test "$("$exe" --version)" = "${GITHUB_REF_NAME#v}"
+          "$exe" bundle --help > /dev/null
+          gh release upload "$GITHUB_REF_NAME" "$exe" --clobber
