@@ -1,5 +1,5 @@
 /**
- * Project icon contract of the desktop packages (engine `support/cef-netrender-probe/packaging/
+ * Project icon contract of the desktop packages (engine `support/cef-windows-player/packaging/
  * project_icon.py`, roves-action `cef/project_icon.py`, Roves Packmaster `cef_player.rs`; keep
  * them in step). The game's icon comes first, the official Roves icon is the fallback.
  *
