@@ -1,0 +1,41 @@
+# Developing roves-cli
+
+`@drincs/roves-cli` is the `roves` command and Node.js API that package a built web game as a
+native Roves app: the engine's prebuilt CEF desktop players (downloaded from engine releases),
+and the engine's Android/iOS WebView tooling at the mobile pin. The CLI (`src/cli.ts`) is a thin
+commander layer over the API exported from `src/index.ts`; keep logic in the API.
+
+## Parity with roves-action and Roves Packmaster
+
+This package must be able to do everything `DRincs-Productions/roves-action` does, so the
+action and Roves Packmaster can depend on it. Desktop assembly mirrors Packmaster's
+`src-tauri/src/cef_player.rs` (zip-to-zip copy keeping modes/symlinks, Windows
+`SHA256SUMS.txt` verify and regenerate, `PROVENANCE.txt` rewrite, icon precedence, Steam and MCP
+rules); mobile mirrors the action's `action.yml` steps. When one of them changes a rule, change
+it here too (and the other way round), and update the tests.
+
+## Pins
+
+- `src/shell-version.txt`: the desktop player release (`roves_shell_<platform>[_steam|_mcp].zip`).
+  Bump it on every engine release that changes the desktop player, then release the CLI.
+- `MOBILE_ENGINE_VERSION` in `src/constants.ts` (`v0.7.15`): an engine tag that still has
+  `mach bundle --android`/`--ios` and `support/ios/bundle.py`. Do not move it without checking.
+
+## Conventions
+
+- TypeScript, ESM only (Node >= 20.19). English for code, comments and docs.
+- Prefer maintained libraries over hand-written code; justify every new dependency.
+- Expected failures throw `RovesError` (printed without a stack by the CLI).
+- Logs go to stderr, results to stdout.
+- Before finishing: `npm run build`, `npm run check` (Biome; fix findings), `npm run typecheck`,
+  `npm test -- --run`, `npm run skills:validate`.
+- Tests use synthetic player zips (`tests/helpers.ts`), never the network. Add tests for every
+  behavior change.
+- Keep `README.md` and `skills/core/SKILL.md` accurate for every command and option.
+
+## CI
+
+- `Test: build, lint and unit tests` (`.github/workflows/test.yml`): every push, Windows only.
+- `Release` (`.github/workflows/npm-publish.yml`): on `v*` tags; Linux tests on Node
+  20.19/22.18/24, npm publish (`NPM_TOKEN` secret), GitHub Release. Linux/macOS CI runs only here.
+- `Validate Agent Skills`: copied unchanged from the DRincs library template.

@@ -1,0 +1,60 @@
+# Runs the tests on every supported Node.js version (Linux), publishes the package to npm and
+# creates a GitHub Release when a v* tag is pushed. Linux/macOS CI runs only here, at release
+# time; every push is tested on Windows by test.yml.
+
+name: Release
+
+permissions:
+  contents: read
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+run-name: ${{ github.workflow }} for ${{ github.ref_name }} by @${{ github.actor }}
+
+jobs:
+  test:
+    name: Test supported Node.js versions
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["20.19.0", "22.18.0", "24"]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm install -g npm@11
+      - run: npm ci
+      - run: npm test -- --run
+
+  publish-npm:
+    name: Publish to NPM
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+      - run: npm ci
+      - run: npm run build
+      - run: npm publish -f
+        env:
+          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+
+  create-release:
+    name: Create Release
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ncipollo/release-action@v1
+        with:
+          body: |
+            Release ${{ github.ref }}

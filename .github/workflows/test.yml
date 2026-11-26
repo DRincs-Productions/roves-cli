@@ -1,0 +1,36 @@
+# Every push is built, linted and unit-tested on Windows only: Linux and macOS CI runs only at
+# release time (the tag-triggered Release workflow, npm-publish.yml).
+
+name: 'Test: build, lint and unit tests'
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build, lint and test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check
+      - run: npm run typecheck
+      - run: npm test -- --run
+      - run: npm run skills:validate
+      - name: CLI smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          node dist/cli.mjs --version
+          node dist/cli.mjs bundle --help > /dev/null
+          npm pack --dry-run
