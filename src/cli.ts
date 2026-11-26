@@ -3,7 +3,7 @@
  * Logs go to stderr; results (paths, `--json`) go to stdout, so scripts can capture them.
  */
 import { copyFile, mkdir } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { Command, Option } from "commander";
 import { version as cliVersion } from "../package.json";
 import {
@@ -19,7 +19,6 @@ import { bundleDesktop, DEFAULT_NAME } from "./desktop";
 import { type DownloadProgress, defaultCacheDir, ensureShellAsset } from "./download";
 import { RovesError } from "./errors";
 import { ANDROID_ORIENTATIONS, buildAndroid, buildIos } from "./mobile";
-import { prepareAndroidToolchain, prepareIosToolchain, type ToolStatus } from "./toolchains";
 
 /** The API functions the commands call; replaceable in tests. */
 export interface CliDependencies {
@@ -27,8 +26,6 @@ export interface CliDependencies {
     buildAndroid: typeof buildAndroid;
     buildIos: typeof buildIos;
     ensureShellAsset: typeof ensureShellAsset;
-    prepareAndroidToolchain: typeof prepareAndroidToolchain;
-    prepareIosToolchain: typeof prepareIosToolchain;
     stdout: (text: string) => void;
     stderr: (text: string) => void;
 }
@@ -38,8 +35,6 @@ const defaultDependencies: CliDependencies = {
     buildAndroid,
     buildIos,
     ensureShellAsset,
-    prepareAndroidToolchain,
-    prepareIosToolchain,
     stdout: (text) => process.stdout.write(text),
     stderr: (text) => process.stderr.write(text),
 };
@@ -222,11 +217,9 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
             "--engine-dir <dir>",
             `existing engine checkout at ${MOBILE_ENGINE_VERSION} (default: a cached shallow clone)`,
         )
-        .option(NO_INSTALL, NO_INSTALL_HELP)
         .option("--json", "print the result as JSON")
         .action(async (options) => {
             const result = await deps.buildAndroid({
-                install: options.install,
                 contentDir: options.contentDir,
                 iconPng: options.iconPng,
                 appName: options.appName,
@@ -298,11 +291,9 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
             "--engine-dir <dir>",
             `existing engine checkout at ${MOBILE_ENGINE_VERSION} (default: a cached shallow clone)`,
         )
-        .option(NO_INSTALL, NO_INSTALL_HELP)
         .option("--json", "print the result as JSON")
         .action(async (options) => {
             const result = await deps.buildIos({
-                install: options.install,
                 contentDir: options.contentDir,
                 appName: options.appName,
                 bundleId: options.bundleId,
@@ -319,42 +310,6 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
                 log,
             });
             printMobile(deps, result, options.json);
-        });
-
-    program
-        .command("setup")
-        .description(
-            "prepare the Android or iOS toolchain only: reuse installed tools, install missing ones into the cache",
-        )
-        .argument("<platform>", "android or ios")
-        .option("--release", "iOS: prepare for --release (uv instead of XcodeGen)")
-        .option(NO_INSTALL, "only check, listing the missing tools")
-        .option("--json", "print the tool list as JSON")
-        .addHelpText(
-            "after",
-            `\nInstalled tools go to ${join(defaultCacheDir(), "toolchains")} (override the cache with ROVES_CACHE_DIR). The Android toolchain takes about 850 MB.`,
-        )
-        .action(async (platform: string, options) => {
-            const common = { install: options.install, log };
-            let tools: ToolStatus[];
-            if (platform === "android") {
-                tools = (await deps.prepareAndroidToolchain(common)).tools;
-            } else if (platform === "ios") {
-                tools = (
-                    await deps.prepareIosToolchain({ ...common, release: Boolean(options.release) })
-                ).tools;
-            } else {
-                throw new RovesError(
-                    `unknown setup platform "${platform}" (expected android or ios)`,
-                );
-            }
-            if (options.json) {
-                deps.stdout(`${JSON.stringify(tools, null, 2)}\n`);
-            } else {
-                for (const tool of tools) {
-                    deps.stdout(`${tool.name}: ${tool.source} (${tool.detail})\n`);
-                }
-            }
         });
 
     program
@@ -414,10 +369,6 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
 
     return program;
 }
-
-const NO_INSTALL = "--no-install";
-const NO_INSTALL_HELP =
-    "do not install missing toolchains (JDK, Android SDK, uv, XcodeGen) into the cache; fail listing them";
 
 function safeHost(): string {
     try {

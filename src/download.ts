@@ -3,13 +3,16 @@
  * of an engine release. The cache keeps the downloaded zip itself, never an extraction: the
  * assembly copies its entries as they are, so Unix modes and symlinks survive on every host.
  */
+import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream } from "node:stream/web";
 import envPaths from "env-paths";
 import { assetUrl, PINNED_SHELL_VERSION, RELEASE_DOWNLOAD_BASE } from "./constants";
 import { RovesError } from "./errors";
-import { type DownloadProgress, downloadFile, HttpError } from "./net";
 import { ZipReader } from "./zip";
 
 /**
@@ -26,7 +29,48 @@ export function shellCachePath(asset: string, version: string, cacheDir = defaul
     return { dir, zip: join(dir, asset), marker: join(dir, ".complete") };
 }
 
-export type { DownloadProgress } from "./net";
+export interface DownloadProgress {
+    received: number;
+    /** 0 when the server sends no length. */
+    total: number;
+}
+
+class HttpError extends Error {
+    constructor(
+        readonly status: number,
+        message: string,
+    ) {
+        super(message);
+    }
+}
+
+async function downloadFile(
+    url: string,
+    dest: string,
+    onProgress?: (progress: DownloadProgress) => void,
+): Promise<void> {
+    const response = await fetch(url, {
+        redirect: "follow",
+        headers: { "User-Agent": "roves-cli" },
+    });
+    if (!response.ok || !response.body) {
+        throw new HttpError(response.status, `HTTP ${response.status} ${response.statusText}`);
+    }
+    const total = Number(response.headers.get("content-length") ?? 0) || 0;
+    let received = 0;
+    const counter = new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+            received += chunk.length;
+            onProgress?.({ received, total });
+            callback(null, chunk);
+        },
+    });
+    await pipeline(
+        Readable.fromWeb(response.body as ReadableStream),
+        counter,
+        createWriteStream(dest),
+    );
+}
 
 export interface EnsureShellAssetOptions {
     /** Engine release tag (default: the pinned `PINNED_SHELL_VERSION`). */

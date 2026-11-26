@@ -214,12 +214,13 @@ describe("Android arguments", () => {
             buildAndroid({
                 contentDir: content,
                 engineDir: engine,
-                install: false,
-                cacheDir: join(tmp, "cache"),
+                home: tmp,
                 probe: () => undefined,
                 env: {},
             }),
-        ).rejects.toThrow(/Android toolchain incomplete[\s\S]*JDK 17[\s\S]*Android SDK[\s\S]*uv/);
+        ).rejects.toThrow(
+            /Android prerequisites missing[\s\S]*JDK 17\+[\s\S]*Android SDK[\s\S]*uv[\s\S]*roves-action/,
+        );
     });
 });
 

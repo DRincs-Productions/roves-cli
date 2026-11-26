@@ -267,43 +267,6 @@ describe("command line", () => {
         expect(await runCli(argv("download", "-p", "linux", "--no-cache"), noCache.deps)).toBe(1);
         expect(noCache.err.join("")).toMatch(/--no-cache requires --output/);
     });
-
-    it("setup prepares only the toolchain and --no-install reaches the API", async () => {
-        const seen: Record<string, unknown>[] = [];
-        const tools = [{ name: "JDK 17", source: "installed" as const, detail: "jdk" }];
-        const toolchain = { tools, env: {}, uv: "uv", git: true };
-        const { deps, out } = capture({
-            prepareAndroidToolchain: async (options) => {
-                seen.push({ platform: "android", ...options });
-                return toolchain;
-            },
-            prepareIosToolchain: async (options) => {
-                seen.push({ platform: "ios", ...options });
-                return toolchain;
-            },
-            buildAndroid: async (options) => {
-                seen.push({ platform: "build", install: options.install });
-                return {
-                    platform: "android",
-                    bundleDir: "/b",
-                    archivePath: "/b.zip",
-                    engineDir: "/e",
-                };
-            },
-        });
-        expect(await runCli(argv("setup", "android"), deps)).toBe(0);
-        expect(out.join("")).toBe("JDK 17: installed (jdk)\n");
-        expect(await runCli(argv("setup", "ios", "--release", "--no-install"), deps)).toBe(0);
-        expect(await runCli(argv("android", "-c", "dist", "--no-install"), deps)).toBe(0);
-        expect(seen).toMatchObject([
-            { platform: "android", install: true },
-            { platform: "ios", install: false, release: true },
-            { platform: "build", install: false },
-        ]);
-        const bad = capture();
-        expect(await runCli(argv("setup", "windows"), bad.deps)).toBe(1);
-        expect(bad.err.join("")).toMatch(/expected android or ios/);
-    });
 });
 
 describe("bundleDesktop end to end (local --shell-zip)", () => {

@@ -76,11 +76,11 @@ ROVES_ANDROID_KEYSTORE_PASSWORD=... ROVES_ANDROID_KEY_PASSWORD=... \
   roves android -c dist --release --keystore release.jks --key-alias upload
 ```
 
-Uses a JDK 17, the Android SDK and uv, installing the missing ones into the cache (see
-below). Options: `--icon-png`, `--app-name`, `--orientation`, `--theme-color`,
+Needs a JDK 17+, the Android SDK packages, uv and git (see [Mobile prerequisites](#mobile-prerequisites)).
+Options: `--icon-png`, `--app-name`, `--orientation`, `--theme-color`,
 `--release`, `--keystore`/`--keystore-base64`, `--keystore-password`, `--key-alias`,
 `--key-password` (each signing value also from `ROVES_ANDROID_*` environment variables),
-`--no-bootstrap`, `--no-install`, `-n`, `-o`, `--engine-dir`, `--json`.
+`--no-bootstrap`, `-n`, `-o`, `--engine-dir`, `--json`.
 
 ### `roves ios` (macOS only)
 
@@ -89,29 +89,24 @@ roves ios -c dist --app-name "My Game" --bundle-id com.example.mygame      # .xc
 roves ios -c dist --release --certificate-p12 dist.p12 --provisioning-profile app.mobileprovision --team-id ABCDE12345
 ```
 
-Needs Xcode (installed by you); XcodeGen (default mode) and uv (`--release`, or when `python3` is
-missing) are installed into the cache when absent. Signing values can come from `ROVES_IOS_*`
-environment variables, and certificate/profile also as base64. `--no-install` as for Android.
+Needs Xcode, XcodeGen and Python (default mode) or uv (`--release`), see
+[Mobile prerequisites](#mobile-prerequisites). Signing values can come from `ROVES_IOS_*`
+environment variables, and certificate/profile also as base64.
 
-### Mobile toolchains: automatic install, `roves setup`, `--no-install`
+### Mobile prerequisites
 
-`roves android` and `roves ios` reuse the tools already on the machine and install only what is
-missing, per user and without admin rights, into `<cache>/toolchains` (the same versions
-roves-action installs): a Temurin JDK 17 from the Adoptium API (SHA-256 checked), the Android
-SDK command-line tools revision 15859902 (SHA-256 pinned) with `platform-tools`, the newest
-`platforms;android-37*` and `build-tools;36.0.0` (licenses accepted non-interactively, canary
-channel as in the action), uv 0.13.10, and on macOS XcodeGen 2.49.0 (release zip; `brew` only as a
-fallback). They are used only by the processes `roves` starts (`JAVA_HOME`, `ANDROID_SDK_ROOT`,
-`ANDROID_HOME`, `PATH`); your shell profile and global environment are never changed. Without
-git, the engine source is downloaded as the tag's archive. Xcode cannot be installed this way
-and stays a requirement for iOS.
+`roves android` and `roves ios` do not install toolchains: they detect them first and stop with
+the full list of what is missing and how to install it. The detected settings (`JAVA_HOME`,
+`ANDROID_SDK_ROOT`/`ANDROID_HOME`) are passed only to the processes `roves` starts.
 
-```bash
-roves setup android          # prepare the Android toolchain only (about 850 MB on disk)
-roves setup ios              # macOS: XcodeGen (+ uv when python3 is missing); --release: uv
-roves setup android --no-install   # only check; lists what is missing
-roves android -c dist --no-install # fail instead of installing
-```
+| Path            | Needs                                                                                                                                                                                                                                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Android         | a JDK 17+ (`JAVA_HOME`, else `java` on PATH), the Android SDK with `platform-tools`, `platforms;android-37` and `build-tools;36.0.0` (`ANDROID_SDK_ROOT`, `ANDROID_HOME` or Android Studio's default folder), [uv](https://docs.astral.sh/uv/), and git (unless `--engine-dir`) |
+| iOS (default)   | macOS, Xcode, XcodeGen, `python3` (or uv), git (unless `--engine-dir`)                                                                                                                                                                                                          |
+| iOS `--release` | macOS, Xcode, uv, git (unless `--engine-dir`)                                                                                                                                                                                                                                   |
+
+The [roves-action](https://github.com/DRincs-Productions/roves-action) GitHub Action installs
+all of them on its runners before calling this CLI.
 
 ### `roves download`
 

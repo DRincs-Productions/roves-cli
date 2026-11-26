@@ -8,14 +8,10 @@ export interface CommandSpec {
     cwd?: string;
     /** Extra environment variables, merged over the current environment. */
     env?: Record<string, string>;
-    /** Written to the command's stdin (e.g. license answers); stdin is inherited otherwise. */
-    input?: string;
 }
 
-/** Runs commands with inherited output; replaceable in tests. */
+/** Runs commands; replaceable in tests. */
 export type CommandRunner = (spec: CommandSpec) => Promise<void>;
-/** Runs a command and returns its stdout; replaceable in tests. */
-export type CommandCapture = (spec: CommandSpec) => Promise<string>;
 
 /** Shows a command line for logs, quoting arguments that need it. */
 export function formatCommand(spec: CommandSpec): string {
@@ -45,58 +41,26 @@ export function mergeEnv(
     return out;
 }
 
-function spawnSpec(spec: CommandSpec, capture: boolean) {
-    return spawn(spec.command, spec.args, {
-        cwd: spec.cwd,
-        env: mergeEnv(spec.env),
-        stdio: [
-            spec.input !== undefined ? "pipe" : "inherit",
-            // Child stdout goes to our stderr: stdout carries only the results (paths, --json).
-            capture ? "pipe" : 2,
-            "inherit",
-        ],
-    });
-}
-
-function settle(
-    spec: CommandSpec,
-    child: ReturnType<typeof spawn>,
-    resolvePromise: () => void,
-    reject: (error: Error) => void,
-) {
-    if (spec.input !== undefined && child.stdin) {
-        child.stdin.on("error", () => {
-            // The command may exit before reading all of its input (e.g. no license to accept).
-        });
-        child.stdin.end(spec.input);
-    }
-    child.on("error", (error) =>
-        reject(new RovesError(`cannot run ${spec.command}: ${error.message}`)),
-    );
-    child.on("close", (code, signal) => {
-        if (code === 0) resolvePromise();
-        else
-            reject(
-                new RovesError(
-                    `${formatCommand(spec)} failed (${signal ? `signal ${signal}` : `exit ${code}`})`,
-                ),
-            );
-    });
-}
-
-/** Runs a command (its stdout and stderr shown on our stderr); fails on a non-zero exit or a missing executable. */
+/** Runs a command, its stdout and stderr shown on our stderr (stdout carries only results). */
 export const runCommand: CommandRunner = (spec) =>
     new Promise((resolvePromise, reject) => {
-        settle(spec, spawnSpec(spec, false), resolvePromise, reject);
-    });
-
-/** Runs a command and returns its stdout (stderr is inherited). */
-export const captureCommand: CommandCapture = (spec) =>
-    new Promise((resolvePromise, reject) => {
-        const child = spawnSpec(spec, true);
-        const chunks: Buffer[] = [];
-        child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
-        settle(spec, child, () => resolvePromise(Buffer.concat(chunks).toString("utf8")), reject);
+        const child = spawn(spec.command, spec.args, {
+            cwd: spec.cwd,
+            env: mergeEnv(spec.env),
+            stdio: ["inherit", 2, "inherit"],
+        });
+        child.on("error", (error) =>
+            reject(new RovesError(`cannot run ${spec.command}: ${error.message}`)),
+        );
+        child.on("close", (code, signal) => {
+            if (code === 0) resolvePromise();
+            else
+                reject(
+                    new RovesError(
+                        `${formatCommand(spec)} failed (${signal ? `signal ${signal}` : `exit ${code}`})`,
+                    ),
+                );
+        });
     });
 
 /**
