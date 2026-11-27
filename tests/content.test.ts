@@ -21,6 +21,8 @@ async function game(root: string): Promise<string> {
     await write(root, "assets/style.css", "body{}");
     await write(root, "assets/img/bg.png", Buffer.alloc(3_000, 1));
     await write(root, "assets/img/text.txt", "lorem ipsum ".repeat(500));
+    // JSON is code, wherever it sits: it goes into code.pack with the JS.
+    await write(root, "sounds/story.json", JSON.stringify({ lines: ["hi"] }));
     await write(root, "sounds/a.ogg", Buffer.alloc(1_200_000, 2));
     await write(root, "sounds/b.ogg", Buffer.alloc(1_200_000, 3));
     await write(root, "my folder/x.bin", "x");
@@ -48,7 +50,13 @@ describe("packed content plan", () => {
         expect(plan.map((a) => [a.name, a.files.map((f) => f.rel)])).toEqual([
             [
                 "code.pack",
-                ["assets/chunk-a.js", "assets/main.js", "assets/style.css", "index.html"],
+                [
+                    "assets/chunk-a.js",
+                    "assets/main.js",
+                    "assets/style.css",
+                    "index.html",
+                    "sounds/story.json",
+                ],
             ],
             ["data-assets.pack", ["assets/img/bg.png", "assets/img/text.txt"]],
             ["data-root.pack", ["favicon.ico"]],
@@ -105,6 +113,8 @@ describe("packContent", () => {
         const code = await entries(join(out, "code.pack"));
         expect(code.get("assets/main.js")?.compressed).toBe(true);
         expect(code.get("assets/main.js")?.bytes.toString()).toBe("export {};\n".repeat(200));
+        expect(code.get("sounds/story.json")?.compressed).toBe(true);
+        expect(code.get("sounds/story.json")?.bytes.toString()).toBe('{"lines":["hi"]}');
         const assets = await entries(join(out, "data-assets.pack"));
         expect(assets.get("assets/img/text.txt")?.compressed).toBe(true);
         expect(assets.get("assets/img/bg.png")?.compressed).toBe(false);
