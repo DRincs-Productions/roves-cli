@@ -47,8 +47,8 @@ roves bundle -c dist --content-layout files            # loose files instead of 
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `-c, --content-dir <dir>`   | Built web game with `index.html` at its root (required).                                                                                                      |
 | `-p, --platform <platform>` | `windows`, `macos`, `linux`; repeatable or comma separated. Default: host.                                                                                    |
-| `--content-layout <layout>` | `archive` (default with player v0.9.1+) or `files` (loose copy). See "Packed game content".                                                                  |
-| `--compression-level <0-9>` | Archive compression: `0` (default, stored: fastest in game) to `9` (smallest download). Media are always stored.                                             |
+| `--content-layout <layout>` | `archive` (default with player v0.9.1+) or `files` (loose copy). See "Packed game content".                                                                   |
+| `--compression-level <0-9>` | Archive compression: `0` (default, stored: fastest in game) to `9` (smallest download). Media are always stored.                                              |
 | `--max-archive-size <size>` | Largest asset archive, e.g. `300MB` (default), `1GiB`; bigger folders are split. At least `1MB`.                                                              |
 | `--icon-png <file>`         | Square PNG project icon (16-2048 px, at most 8 MiB). Default: `<content-dir>/icon.png`.                                                                       |
 | `--icon-ico <file>`         | `.ico` for `play.exe`. Default: generated from the PNG, else `icon.ico`/`favicon.ico`.                                                                        |
