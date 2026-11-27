@@ -39,12 +39,17 @@ roves bundle -c dist --steam --steam-app-id 480        # Steam variant + steam_a
 roves bundle -c dist --enable-mcp -n my-game_mcp       # MCP development player (never ship it)
 roves bundle -c dist --icon-png icon.png --icon-ico icon.ico
 roves bundle -c dist -p linux --json                   # machine-readable result
+roves bundle -c dist --compression-level 6 --max-archive-size 500MB   # smaller download
+roves bundle -c dist --content-layout files            # loose files instead of archives
 ```
 
 | Option                      | Description                                                                                                                                                   |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `-c, --content-dir <dir>`   | Built web game with `index.html` at its root (required).                                                                                                      |
 | `-p, --platform <platform>` | `windows`, `macos`, `linux`; repeatable or comma separated. Default: host.                                                                                    |
+| `--content-layout <layout>` | `archive` (default with player v0.9.1+) or `files` (loose copy). See "Packed game content".                                                                  |
+| `--compression-level <0-9>` | Archive compression: `0` (default, stored: fastest in game) to `9` (smallest download). Media are always stored.                                             |
+| `--max-archive-size <size>` | Largest asset archive, e.g. `300MB` (default), `1GiB`; bigger folders are split. At least `1MB`.                                                              |
 | `--icon-png <file>`         | Square PNG project icon (16-2048 px, at most 8 MiB). Default: `<content-dir>/icon.png`.                                                                       |
 | `--icon-ico <file>`         | `.ico` for `play.exe`. Default: generated from the PNG, else `icon.ico`/`favicon.ico`.                                                                        |
 | `--steam`                   | Steam variant (Steamworks redistributable next to the executable).                                                                                            |
@@ -63,7 +68,20 @@ Outputs: one platform gives `<name>.zip` (one `<name>/` folder inside, or `<name
 root on macOS) and the unzipped `<name>/` (`<name>.app`); several platforms give
 `<name>_<platform>.zip` and `<name>_<platform>/`. Each result reports `archive-path`,
 `bundle-dir`, `mcp-enabled` and `icon-source`, like roves-action's outputs (`--json` adds
-`topFolder`, `executable`, `asset`, `base`, `shellVersion` and `warnings`).
+`topFolder`, `executable`, `asset`, `base`, `shellVersion`, `contentLayout` and `warnings`).
+
+#### Packed game content
+
+By default `game/` holds `roves-content.json`, `code.pack` (every code file: JS chunks, CSS,
+HTML, JSON, WASM, source maps) and `data-<top folder>[-N].pack` archives (all other files,
+grouped by their top-level folder, `data-root` for root files, split at `--max-archive-size`).
+They are ZIP archives the player memory-maps and serves straight from memory, reading ahead the
+next files of the same folder; stored (level 0) is the fastest in game, a level 1-9 makes the
+download smaller and costs CPU the first time each file is read (compressed code is inflated
+once at startup). Images, audio, video, fonts and archives are always stored. Packing is done
+once for all platforms and is deterministic. With a `--shell-version` older than v0.9.1 the
+default falls back to loose files (a warning says so); `--content-layout archive` then fails.
+Symlinks inside the game folder can only be shipped with `--content-layout files`.
 
 Windows packages are verified against the player's `SHA256SUMS.txt` and get a regenerated one
 plus a "game replaced" note in `PROVENANCE.txt`; `play.exe`'s icon is patched in pure JS.

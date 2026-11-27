@@ -17,6 +17,17 @@ import {
     validateShellVersion,
     validateSteamAppId,
 } from "./constants";
+import {
+    type ContentLayout,
+    DEFAULT_COMPRESSION_LEVEL,
+    DEFAULT_MAX_ARCHIVE_SIZE,
+    PACKED_CONTENT_MIN_SHELL,
+    type PackedContent,
+    packContent,
+    parseArchiveSize,
+    shellReadsPackedContent,
+    validateCompressionLevel,
+} from "./content";
 import { type DownloadProgress, ensureShellAsset } from "./download";
 import { RovesError } from "./errors";
 import { resolveProjectIcon } from "./icon";
@@ -44,6 +55,16 @@ export interface BundleDesktopOptions {
     enableMcp?: boolean;
     /** Base name of the zip and of the folder inside it (default `roves-game`). */
     name?: string;
+    /**
+     * `archive` (default from player v0.9.1): `game/` holds a few archives and
+     * `roves-content.json` (code in one archive, assets grouped by top-level folder); `files`:
+     * the build copied as loose files.
+     */
+    contentLayout?: ContentLayout;
+    /** Archive compression, 0 (none, default: fastest in game) to 9 (smallest). */
+    compressionLevel?: number;
+    /** Largest asset archive in bytes, or a size such as `300MB` (default 300 MB). */
+    maxArchiveSize?: number | string;
     /** Where the zips and folders are written (default: the current directory). */
     outDir?: string;
     /** Also write the unzipped package folder next to the zip (default true). */
@@ -82,6 +103,8 @@ export interface DesktopBundleResult {
      * `Contents/MacOS/<CFBundleExecutable>`, the Linux player), e.g. for installers. */
     executable: string;
     mcpEnabled: boolean;
+    /** How the game is stored in `game/`. */
+    contentLayout: ContentLayout;
     /** Where the icons came from, e.g. `window project (game icon.png 512x512); executable ...`. */
     iconSource: string;
     warnings: string[];
@@ -93,6 +116,10 @@ export async function validateDesktopOptions(options: BundleDesktopOptions): Pro
     name: string;
     shellVersion: string;
     steamAppId?: string;
+    contentLayout: ContentLayout;
+    compressionLevel: number;
+    maxArchiveSize: number;
+    warnings: string[];
 }> {
     const platforms = options.platforms?.length ? options.platforms : [hostPlatform()];
     const name = validateName(options.name ?? DEFAULT_NAME);
@@ -124,21 +151,67 @@ export async function validateDesktopOptions(options: BundleDesktopOptions): Pro
             throw new RovesError(`${flag} ${path} is not a file`);
         }
     }
-    return { platforms, name, shellVersion, steamAppId };
+    const compressionLevel = validateCompressionLevel(
+        options.compressionLevel ?? DEFAULT_COMPRESSION_LEVEL,
+    );
+    const maxArchiveSize = parseArchiveSize(options.maxArchiveSize ?? DEFAULT_MAX_ARCHIVE_SIZE);
+    if (options.contentLayout && !["archive", "files"].includes(options.contentLayout)) {
+        throw new RovesError(
+            `invalid content layout "${options.contentLayout}" (expected archive or files)`,
+        );
+    }
+    // A local --shell-zip is trusted to be a current player; a downloaded one must be recent.
+    const readsArchives = Boolean(options.shellZip) || shellReadsPackedContent(shellVersion);
+    const warnings: string[] = [];
+    let contentLayout: ContentLayout = options.contentLayout ?? "archive";
+    if (contentLayout === "archive" && !readsArchives) {
+        if (options.contentLayout === "archive") {
+            throw new RovesError(
+                `--content-layout archive needs the player ${PACKED_CONTENT_MIN_SHELL} or later (--shell-version ${shellVersion})`,
+            );
+        }
+        contentLayout = "files";
+        warnings.push(
+            `the player ${shellVersion} predates packed content (${PACKED_CONTENT_MIN_SHELL}): the game is copied as loose files`,
+        );
+    }
+    return {
+        platforms,
+        name,
+        shellVersion,
+        steamAppId,
+        contentLayout,
+        compressionLevel,
+        maxArchiveSize,
+        warnings,
+    };
 }
 
 /** Packages the game for every requested desktop platform, one zip (and folder) each. */
 export async function bundleDesktop(options: BundleDesktopOptions): Promise<DesktopBundleResult[]> {
-    const { platforms, name, shellVersion, steamAppId } = await validateDesktopOptions(options);
+    const valid = await validateDesktopOptions(options);
+    const { platforms, name, shellVersion, steamAppId, contentLayout } = valid;
     const log = options.log ?? (() => {});
+    for (const warning of valid.warnings) log(warning);
     const outDir = resolve(options.outDir ?? ".");
     const contentDir = resolve(options.contentDir);
     await mkdir(outDir, { recursive: true });
-    const results: DesktopBundleResult[] = [];
-    for (const platform of platforms) {
-        const stem = platforms.length === 1 ? name : `${name}_${platform}`;
-        results.push(
-            await bundleOne(platform, {
+    // Packed once for every platform (the archives are platform independent).
+    const packDir =
+        contentLayout === "archive" ? await mkdtemp(join(tmpdir(), "roves-content-")) : undefined;
+    try {
+        let packed: PackedContent | undefined;
+        if (packDir) {
+            packed = await packContent(contentDir, packDir, {
+                compressionLevel: valid.compressionLevel,
+                maxArchiveSize: valid.maxArchiveSize,
+            });
+            log(`content: packed ${packed.summary}`);
+        }
+        const results: DesktopBundleResult[] = [];
+        for (const platform of platforms) {
+            const stem = platforms.length === 1 ? name : `${name}_${platform}`;
+            const result = await bundleOne(platform, {
                 ...options,
                 contentDir,
                 outDir,
@@ -146,11 +219,16 @@ export async function bundleDesktop(options: BundleDesktopOptions): Promise<Desk
                 stem,
                 shellVersion,
                 steamAppId,
+                packed,
                 log,
-            }),
-        );
+            });
+            result.warnings.unshift(...valid.warnings);
+            results.push(result);
+        }
+        return results;
+    } finally {
+        if (packDir) await rm(packDir, { recursive: true, force: true });
     }
-    return results;
 }
 
 async function bundleOne(
@@ -161,6 +239,7 @@ async function bundleOne(
         name: string;
         stem: string;
         shellVersion: string;
+        packed?: PackedContent;
         log: (message: string) => void;
     },
 ): Promise<DesktopBundleResult> {
@@ -216,6 +295,7 @@ async function bundleOne(
             base,
             {
                 contentDir: options.contentDir,
+                packed: options.packed,
                 topFolder,
                 enableMcp: mcp,
                 steamAppId: options.steamAppId,
@@ -256,6 +336,7 @@ async function bundleOne(
             topFolder,
             executable: base.executable,
             mcpEnabled: mcp,
+            contentLayout: options.packed ? "archive" : "files",
             iconSource: icon.summary,
             warnings,
         };

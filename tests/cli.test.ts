@@ -317,7 +317,10 @@ describe("bundleDesktop end to end (local --shell-zip)", () => {
         expect(result?.iconSource).toBe("window project (game icon.png 64x64)");
         const zip = await readZip(result?.archivePath as string);
         expect(fileNames(zip).every((name) => name.startsWith("my-game/"))).toBe(true);
-        expect(await stat(join(tmp, "out", "my-game", "game", "index.html"))).toBeTruthy();
+        // A local player is trusted to read packed content (the default layout).
+        expect(result?.contentLayout).toBe("archive");
+        expect(await stat(join(tmp, "out", "my-game", "game", "roves-content.json"))).toBeTruthy();
+        expect(await stat(join(tmp, "out", "my-game", "game", "code.pack"))).toBeTruthy();
         expect(await decodePngSize(zip.get("my-game/icon.png")?.bytes as Buffer)).toEqual([64, 64]);
     });
 

@@ -15,6 +15,7 @@ import {
     parsePlatforms,
     validateShellVersion,
 } from "./constants";
+import { DEFAULT_COMPRESSION_LEVEL, parseArchiveSize, validateCompressionLevel } from "./content";
 import { bundleDesktop, DEFAULT_NAME } from "./desktop";
 import { type DownloadProgress, defaultCacheDir, ensureShellAsset } from "./download";
 import { RovesError } from "./errors";
@@ -114,6 +115,24 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
             "--enable-mcp",
             "package the MCP-enabled development player (AI agents can drive the game; never ship it)",
         )
+        .addOption(
+            new Option(
+                "--content-layout <layout>",
+                "game/ as a few archives (archive: code in one archive, assets grouped by folder; fastest) or as loose files",
+            )
+                .choices(["archive", "files"])
+                .default("archive"),
+        )
+        .option(
+            "--compression-level <level>",
+            "archive compression, 0 (none, fastest in game) to 9 (smallest download)",
+            String(DEFAULT_COMPRESSION_LEVEL),
+        )
+        .option(
+            "--max-archive-size <size>",
+            "largest asset archive, e.g. 300MB or 1GiB (bigger folders are split)",
+            "300MB",
+        )
         .option(
             "-n, --name <name>",
             "base name of the zip and of the folder inside it (<name>.app on macOS)",
@@ -141,7 +160,7 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
                 .choices(["plain", "json"])
                 .default("plain"),
         )
-        .action(async (options) => {
+        .action(async (options, command: Command) => {
             const platforms = parsePlatforms(options.platform);
             const jsonProgress = options.progress === "json";
             const event = (value: Record<string, unknown>) =>
@@ -164,6 +183,14 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
                 steam: Boolean(options.steam),
                 steamAppId: options.steamAppId,
                 enableMcp: Boolean(options.enableMcp),
+                // The default may fall back to loose files for an old --shell-version; an
+                // explicit "archive" never does.
+                contentLayout:
+                    command.getOptionValueSource("contentLayout") === "default"
+                        ? undefined
+                        : options.contentLayout,
+                compressionLevel: validateCompressionLevel(options.compressionLevel),
+                maxArchiveSize: parseArchiveSize(options.maxArchiveSize),
                 name: options.name,
                 outDir: options.outDir,
                 extract: options.extract,

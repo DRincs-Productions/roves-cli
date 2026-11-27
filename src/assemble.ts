@@ -22,6 +22,7 @@ import {
     WINDOWS_EXE,
 } from "./base";
 import type { DesktopPlatform } from "./constants";
+import { CONTENT_MANIFEST, type PackedContent } from "./content";
 import { RovesError } from "./errors";
 import { setExeIcon } from "./exe-icon";
 import type { ProjectIcon } from "./icon";
@@ -35,6 +36,8 @@ const EXE_MODE = S_IFREG | 0o755;
 export interface AssembleOptions {
     /** The developer's build output (must contain `index.html`). */
     contentDir: string;
+    /** The same build packed into archives (`packContent`); `game/` then holds these files. */
+    packed?: PackedContent;
     /** Top-level folder of the output zip: `<name>` (Windows/Linux) or `<name>.app` (macOS). */
     topFolder: string;
     /** Keep the base's local MCP bridge (the `_mcp` asset's `mcp/` folder). */
@@ -50,7 +53,7 @@ export interface AssembleOptions {
     patchExe?: (exe: string, ico: string) => Promise<void>;
 }
 
-type Source = { file: string } | { bytes: Buffer };
+type Source = { file: string; compress?: boolean } | { bytes: Buffer };
 
 /**
  * Writes `outZip`: the base's entries (raw copies) with the game replaced by `contentDir`, the
@@ -99,9 +102,18 @@ async function writePackage(
     // Files this tool writes, (package-relative path, source).
     const added: [string, Source][] = [];
     const addedDirs = [gameDir];
-    for (const rel of await walkDirectory(options.contentDir)) {
-        if (rel.endsWith("/")) addedDirs.push(`${gameDir}/${rel.slice(0, -1)}`);
-        else added.push([`${gameDir}/${rel}`, { file: join(options.contentDir, rel) }]);
+    if (options.packed) {
+        const { dir, files, compressed } = options.packed;
+        for (const name of files) {
+            // Compressed archives are stored in the package zip: deflating them again is wasted.
+            const compress = !compressed || name === CONTENT_MANIFEST;
+            added.push([`${gameDir}/${name}`, { file: join(dir, name), compress }]);
+        }
+    } else {
+        for (const rel of await walkDirectory(options.contentDir)) {
+            if (rel.endsWith("/")) addedDirs.push(`${gameDir}/${rel.slice(0, -1)}`);
+            else added.push([`${gameDir}/${rel}`, { file: join(options.contentDir, rel) }]);
+        }
     }
     if (options.icon.windowPng) added.push([windowIcon, { file: options.icon.windowPng }]);
     if (options.icon.appIcns && base.bundleIcns) {
@@ -173,7 +185,7 @@ async function writePackage(
             writer.addBuffer(`${top}/${rel}`, source.bytes, { mode });
             hashes.set(rel, createHash("sha256").update(source.bytes).digest("hex"));
         } else {
-            writer.addFile(source.file, `${top}/${rel}`, { mode });
+            writer.addFile(source.file, `${top}/${rel}`, { mode, compress: source.compress });
             hashes.set(rel, await sha256File(source.file));
         }
     }

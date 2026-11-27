@@ -124,6 +124,17 @@ export interface ZipWriteOptions {
     mtime?: Date;
     /** Deflate (default) or store. */
     compress?: boolean;
+    /** Deflate level 1-9, or 0 to store; overrides `compress`. */
+    compressionLevel?: number;
+}
+
+/** yazl's compression options for one entry. */
+function compression(
+    options: ZipWriteOptions,
+): { compress: boolean } | { compressionLevel: number } {
+    return options.compressionLevel !== undefined
+        ? { compressionLevel: options.compressionLevel }
+        : { compress: options.compress ?? true };
 }
 
 /**
@@ -154,7 +165,7 @@ export class ZipWriter {
     addBuffer(name: string, data: Buffer, options: ZipWriteOptions): void {
         this.zip.addBuffer(data, name, {
             mode: options.mode,
-            compress: options.compress ?? true,
+            ...compression(options),
             ...(options.mtime ? { mtime: options.mtime } : {}),
         });
     }
@@ -162,7 +173,7 @@ export class ZipWriter {
     addFile(realPath: string, name: string, options: ZipWriteOptions): void {
         this.zip.addFile(realPath, name, {
             mode: options.mode,
-            compress: options.compress ?? true,
+            ...compression(options),
             ...(options.mtime ? { mtime: options.mtime } : {}),
         });
     }

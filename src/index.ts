@@ -57,6 +57,20 @@ export {
     type ShellAsset,
     shellCachePath,
 } from "./download";
+export {
+    CONTENT_FORMAT,
+    CONTENT_LAYOUTS,
+    CONTENT_MANIFEST,
+    type ContentLayout,
+    DEFAULT_COMPRESSION_LEVEL,
+    DEFAULT_MAX_ARCHIVE_SIZE,
+    PACKED_CONTENT_MIN_SHELL,
+    type PackedContent,
+    type PackOptions,
+    packContent,
+    parseArchiveSize,
+    validateCompressionLevel,
+} from "./content";
 export { RovesError } from "./errors";
 export { setExeIcon } from "./exe-icon";
 export {
