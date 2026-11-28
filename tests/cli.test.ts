@@ -113,6 +113,75 @@ describe("command line", () => {
         expect(await runCli(argv("bundle", "-c", "dist", "--progress", "xml"), bad.deps)).toBe(1);
     });
 
+    it("maps the mods and DLC options and commands", async () => {
+        const calls: Record<string, unknown> = {};
+        const { deps, out } = capture({
+            bundleDesktop: async (options) => {
+                calls.bundle = options;
+                return [];
+            },
+            packMod: async (options) => {
+                calls.pack = options;
+                return {
+                    path: "x.rovesmod",
+                    id: "x",
+                    kind: "mod",
+                    version: "1.0.0",
+                    files: 1,
+                    signed: false,
+                };
+            },
+            checkMod: async (options) => {
+                calls.check = options;
+                return {
+                    id: "x",
+                    kind: "mod",
+                    version: "1.0.0",
+                    compatible: false,
+                    problems: ["p"],
+                    notChecked: [],
+                };
+            },
+            initDlcKey: async (dir) => {
+                calls.keygen = dir;
+                return { keyFile: "k.pem", publicKey: "PUB", created: true };
+            },
+        });
+        const bundle = (...extra: string[]) => runCli(argv("bundle", "-c", "dist", ...extra), deps);
+        expect(await bundle()).toBe(0);
+        expect(calls.bundle).toMatchObject({ mods: undefined, dlc: undefined });
+        expect(
+            await bundle(
+                "--no-mods",
+                "--dlc",
+                "a",
+                "--dlc",
+                "b.rovesmod",
+                "--project-dir",
+                "game",
+                "--dlc-key",
+                "k.pem",
+            ),
+        ).toBe(0);
+        expect(calls.bundle).toMatchObject({
+            mods: false,
+            dlc: ["a", "b.rovesmod"],
+            projectDir: "game",
+            dlcKey: "k.pem",
+        });
+        expect(await runCli(argv("mod", "pack", "m", "-o", "out"), deps)).toBe(0);
+        expect(calls.pack).toMatchObject({ modDir: "m", outDir: "out" });
+        expect(await runCli(argv("mod", "check", "m", "--game", "pkg"), deps)).toBe(0);
+        expect(calls.check).toEqual({ mod: "m", game: "pkg" });
+        expect(process.exitCode).toBe(1);
+        process.exitCode = 0;
+        expect(await runCli(argv("dlc", "keygen", "--project-dir", "game"), deps)).toBe(0);
+        expect(calls.keygen).toBe("game");
+        expect(out.join("")).toContain("x.rovesmod\n");
+        expect(out.join("")).toContain("x@1.0.0 (mod): incompatible\n  - p\n");
+        expect(out.join("")).toContain("PUB\n");
+    });
+
     it("maps bundle options to bundleDesktop", async () => {
         let received: Parameters<typeof bundleDesktop>[0] | undefined;
         const { deps, out } = capture({

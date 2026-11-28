@@ -20,6 +20,7 @@ import { bundleDesktop, DEFAULT_NAME } from "./desktop";
 import { type DownloadProgress, defaultCacheDir, ensureShellAsset } from "./download";
 import { RovesError } from "./errors";
 import { ANDROID_ORIENTATIONS, buildAndroid, buildIos } from "./mobile";
+import { checkMod, DLC_KEY_ENV, devMod, initDlcKey, initMod, packMod } from "./mods";
 
 /** The API functions the commands call; replaceable in tests. */
 export interface CliDependencies {
@@ -27,6 +28,11 @@ export interface CliDependencies {
     buildAndroid: typeof buildAndroid;
     buildIos: typeof buildIos;
     ensureShellAsset: typeof ensureShellAsset;
+    packMod: typeof packMod;
+    checkMod: typeof checkMod;
+    devMod: typeof devMod;
+    initMod: typeof initMod;
+    initDlcKey: typeof initDlcKey;
     stdout: (text: string) => void;
     stderr: (text: string) => void;
 }
@@ -36,6 +42,11 @@ const defaultDependencies: CliDependencies = {
     buildAndroid,
     buildIos,
     ensureShellAsset,
+    packMod,
+    checkMod,
+    devMod,
+    initMod,
+    initDlcKey,
     stdout: (text) => process.stdout.write(text),
     stderr: (text) => process.stderr.write(text),
 };
@@ -138,6 +149,19 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
             "base name of the zip and of the folder inside it (<name>.app on macOS)",
             DEFAULT_NAME,
         )
+        .option("--no-mods", "do not load third-party mods (DLC still load)")
+        .option(
+            "--dlc <path>",
+            "ship a DLC in dlc/ next to the game: an add-on folder (packed and signed) or a signed .rovesmod file; repeatable",
+            collect,
+        )
+        .option(
+            "--project-dir <dir>",
+            "the game's project folder with its package.json (name and version that mods are checked against; default: the nearest one above the content dir)",
+        )
+        .addOption(
+            new Option("--dlc-key <file>", "DLC private key for --dlc folders").env(DLC_KEY_ENV),
+        )
         .option("-o, --out-dir <dir>", "where the zips and folders are written", ".")
         .option("--no-extract", "write only the zip, not the unzipped package folder")
         .option(
@@ -192,6 +216,11 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
                 compressionLevel: validateCompressionLevel(options.compressionLevel),
                 maxArchiveSize: parseArchiveSize(options.maxArchiveSize),
                 name: options.name,
+                // Only an explicit --no-mods overrides the game's package.json.
+                mods: command.getOptionValueSource("mods") === "default" ? undefined : options.mods,
+                projectDir: options.projectDir,
+                dlc: options.dlc,
+                dlcKey: options.dlcKey,
                 outDir: options.outDir,
                 extract: options.extract,
                 shellVersion: validateShellVersion(options.shellVersion),
@@ -217,6 +246,8 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
                         ...(result.bundleDir ? [`  bundle-dir: ${result.bundleDir}`] : []),
                         `  mcp-enabled: ${result.mcpEnabled}`,
                         `  icon-source: ${result.iconSource}`,
+                        `  mods: ${result.mods === null ? "unsupported (no package.json)" : result.mods}`,
+                        ...(result.dlc.length ? [`  dlc: ${result.dlc.join(", ")}`] : []),
                         "",
                     ].join("\n"),
                 );
@@ -426,7 +457,111 @@ export function createProgram(overrides: Partial<CliDependencies> = {}): Command
             }
         });
 
+    addModCommands(program, deps, log);
     return program;
+}
+
+/** `roves mod ...` and `roves dlc ...` (wiki "Mods and DLC"). */
+function addModCommands(
+    program: Command,
+    deps: CliDependencies,
+    log: (message: string) => void,
+): void {
+    const mod = program.command("mod").description("make, test and pack mods and DLC");
+    mod.command("init")
+        .description(
+            "create a mod (package.json, index.js, overrides/) or add the roves section to a package.json",
+        )
+        .argument("[dir]", "the mod folder", ".")
+        .option("--game <package>", "an unzipped package of the game: fills roves.game")
+        .option("--game-name <name>", "the game's package name, without a package at hand")
+        .addOption(
+            new Option("--kind <kind>", "mod, or dlc (the game's developer only)")
+                .choices(["mod", "dlc"])
+                .default("mod"),
+        )
+        .option("--name <name>", "package name (the mod's id), e.g. @me/new-ending")
+        .action(async (dir: string, options) => {
+            const result = await deps.initMod({
+                dir,
+                game: options.game,
+                gameName: options.gameName,
+                kind: options.kind,
+                name: options.name,
+            });
+            deps.stdout(`${result.manifest}\n`);
+            if (result.created.length) log(`created ${result.created.join(", ")}`);
+        });
+    mod.command("dev")
+        .description(
+            "run the packaged game with this mod folder loaded unpacked; restarts on changes outside overrides/",
+        )
+        .argument("[dir]", "the mod folder", ".")
+        .requiredOption("--game <package>", "an unzipped package of the game (folder or .app)")
+        .option("--no-watch", "do not restart the game on changes")
+        .action(async (dir: string, options) => {
+            const code = await deps.devMod({
+                modDir: dir,
+                game: options.game,
+                watch: options.watch,
+                log,
+            });
+            process.exitCode = code;
+        });
+    mod.command("check")
+        .description("check a mod folder or .rovesmod file against a packaged game")
+        .argument("[mod]", "the mod folder or .rovesmod file", ".")
+        .requiredOption("--game <package>", "an unzipped package of the game (folder or .app)")
+        .option("--json", "print the result as JSON")
+        .action(async (path: string, options) => {
+            const result = await deps.checkMod({ mod: path, game: options.game });
+            if (options.json) {
+                deps.stdout(`${JSON.stringify(result, null, 2)}\n`);
+            } else {
+                deps.stdout(
+                    [
+                        `${result.id}@${result.version} (${result.kind}): ${result.compatible ? "compatible" : "incompatible"}`,
+                        ...result.problems.map((p) => `  - ${p}`),
+                        ...result.notChecked.map((p) => `  (checked by the player: ${p})`),
+                        "",
+                    ].join("\n"),
+                );
+            }
+            if (!result.compatible) process.exitCode = 1;
+        });
+    mod.command("pack")
+        .description(
+            "pack a mod folder into <id>-<version>.rovesmod (a DLC is signed with the game's key)",
+        )
+        .argument("[dir]", "the mod folder", ".")
+        .option("-o, --out-dir <dir>", "where the .rovesmod file is written", ".")
+        .addOption(new Option("--dlc-key <file>", "DLC private key").env(DLC_KEY_ENV))
+        .option("--json", "print the result as JSON")
+        .action(async (dir: string, options) => {
+            const result = await deps.packMod({
+                modDir: dir,
+                outDir: options.outDir,
+                keyFile: options.dlcKey,
+                log,
+            });
+            deps.stdout(options.json ? `${JSON.stringify(result, null, 2)}\n` : `${result.path}\n`);
+        });
+
+    const dlc = program.command("dlc").description("the game's DLC key");
+    dlc.command("keygen")
+        .description(
+            "create the game's DLC key pair: the private key in roves-dlc-key.pem (keep it secret), the public key in package.json",
+        )
+        .option("--project-dir <dir>", "the game's project folder", ".")
+        .action(async (options) => {
+            const result = await deps.initDlcKey(options.projectDir);
+            log(
+                result.created
+                    ? `created ${result.keyFile}: keep it secret (it is in .gitignore); for CI, store its content in the ${DLC_KEY_ENV} secret`
+                    : `kept the existing ${result.keyFile}`,
+            );
+            deps.stdout(`${result.publicKey}\n`);
+        });
 }
 
 function safeHost(): string {

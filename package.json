@@ -68,6 +68,8 @@
     "env-paths": "^4.0.0",
     "plist": "^5.1.2",
     "resedit": "^3.1.1",
+    "semver": "^7.8.6",
+    "tinyglobby": "^0.2.17",
     "yauzl": "^3.4.0",
     "yazl": "^3.3.1"
   },
@@ -75,6 +77,7 @@
     "@biomejs/biome": "^2.6.9",
     "@types/node": "^20.19.43",
     "@types/plist": "^3.0.5",
+    "@types/semver": "^7.8.0",
     "@types/yauzl": "^3.4.0",
     "@types/yazl": "^3.3.1",
     "postject": "^1.0.0-alpha.6",

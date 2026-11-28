@@ -55,6 +55,10 @@ roves bundle -c dist --content-layout files            # loose files instead of 
 | `--steam`                   | Steam variant (Steamworks redistributable next to the executable).                                                                                            |
 | `--steam-app-id <id>`       | Writes `steam_appid.txt` next to the executable (development). Requires `--steam`.                                                                            |
 | `--enable-mcp`              | MCP-enabled development player. Not with `--steam`.                                                                                                           |
+| `--no-mods`                 | Do not load third-party mods (default: the game's `package.json` `roves.mods`, else allowed). DLC still load. See "Mods and DLC".                             |
+| `--dlc <path>`              | Ship a DLC (add-on folder, packed and signed, or a signed `.rovesmod`) in `dlc/` next to `game/`. Repeatable.                                                 |
+| `--project-dir <dir>`       | The game's project folder with its `package.json`. Default: the nearest one above the content dir.                                                            |
+| `--dlc-key <file>`          | DLC private key for `--dlc` folders (also `ROVES_DLC_KEY`; default `roves-dlc-key.pem` in the project).                                                      |
 | `-n, --name <name>`         | Zip/folder base name (default `roves-game`).                                                                                                                  |
 | `-o, --out-dir <dir>`       | Output directory (default `.`).                                                                                                                               |
 | `--no-extract`              | Only the zip, no unzipped folder.                                                                                                                             |
@@ -68,7 +72,32 @@ Outputs: one platform gives `<name>.zip` (one `<name>/` folder inside, or `<name
 root on macOS) and the unzipped `<name>/` (`<name>.app`); several platforms give
 `<name>_<platform>.zip` and `<name>_<platform>/`. Each result reports `archive-path`,
 `bundle-dir`, `mcp-enabled` and `icon-source`, like roves-action's outputs (`--json` adds
-`topFolder`, `executable`, `asset`, `base`, `shellVersion`, `contentLayout` and `warnings`).
+`topFolder`, `executable`, `asset`, `base`, `shellVersion`, `contentLayout`, `mods`, `dlc` and
+`warnings`).
+
+### Mods and DLC
+
+`roves bundle` writes `game/roves-game.json` from the game's `package.json` (found above the
+content dir, or `--project-dir`): its `name` and `version` (what add-ons are checked against),
+whether mods are allowed (`roves.mods`, or `--no-mods`), the DLC public key
+(`roves.dlcPublicKey`) and the libraries the game shares (`roves.shared`). Without a
+`package.json` the package has no mod or DLC support (a warning). The player loads add-ons from
+player v0.9.2.
+
+| Command | What it does |
+| ------- | ------------ |
+| `roves dlc keygen [--project-dir <dir>]` | Creates the game's DLC key pair once: the private key in `roves-dlc-key.pem` (added to `.gitignore`; for CI put its content in the `ROVES_DLC_KEY` secret), the public key in `package.json` `roves.dlcPublicKey`. Only the key's owner can make DLC. |
+| `roves bundle --dlc <path>` | Ships a DLC in `dlc/` next to `game/`: an add-on folder (packed and signed with `--dlc-key`/`ROVES_DLC_KEY`/`roves-dlc-key.pem`) or a signed `.rovesmod`. The signature is checked against the game's key. Repeatable. |
+| `roves mod init [dir] --game <package> \| --game-name <name> [--kind dlc]` | Creates `package.json` (`name`, `version`, `main`, `files`, `roves.game` with `^<game version>`), `index.js` (a `defineMod` starter) and `overrides/`; in an existing project only adds the `roves` section. |
+| `roves mod dev [dir] --game <package>` | Runs an unzipped package of the game with the mod folder loaded unpacked (`--roves-dev-mod`, no signature needed). `overrides/` is read live; other changes restart the game (`--no-watch` to turn it off). |
+| `roves mod check [mod] --game <package> [--json]` | The player's checks against that package: game name and version range, shared libraries, `main`, DLC signature. Exit code 1 when incompatible. |
+| `roves mod pack [dir] [-o <dir>] [--dlc-key <file>] [--json]` | Writes `<id>-<version>.rovesmod`: the files `npm pack` would take (`files`, plus `package.json` and `cover.*`; never `node_modules`, `.git` or the key), `dependencies` rewritten to the installed versions, deterministic. A DLC is signed. |
+
+An add-on's `package.json`: `name` (id), `displayName`, `description`, `author`, `version`,
+`main`, `files`, `peerDependencies` (libraries reused from the game), `dependencies` (bundled),
+and `roves`: `kind` (`mod`/`dlc`), `game: {name, version}` (npm range), `mods` (required
+add-ons), `steamAppId` (DLC). The cover is `cover.png`/`cover.jpg`/`cover.webp`; files in
+`overrides/` replace the game's.
 
 #### Packed game content
 

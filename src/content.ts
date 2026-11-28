@@ -45,7 +45,7 @@ const CODE_EXTENSIONS = new Set([
 ]);
 
 /** Formats that are compressed already: deflating them again only costs CPU. */
-const STORED_EXTENSIONS = new Set([
+export const STORED_EXTENSIONS = new Set([
     ".png",
     ".jpg",
     ".jpeg",

@@ -23,6 +23,7 @@ import {
 } from "./base";
 import type { DesktopPlatform } from "./constants";
 import { CONTENT_MANIFEST, type PackedContent } from "./content";
+import { GAME_IDENTITY_FILE } from "./mods";
 import { RovesError } from "./errors";
 import { setExeIcon } from "./exe-icon";
 import type { ProjectIcon } from "./icon";
@@ -31,6 +32,8 @@ import { S_IFDIR, S_IFREG, sha256File, walkDirectory, ZipWriter } from "./zip";
 /** Mode of the files this tool writes (game files, icons, `steam_appid.txt`). */
 const FILE_MODE = S_IFREG | 0o644;
 const DIR_MODE = S_IFDIR | 0o755;
+/** DLC shipped with the game, next to `game/`. */
+export const DLC_DIR = "dlc";
 const EXE_MODE = S_IFREG | 0o755;
 
 export interface AssembleOptions {
@@ -51,6 +54,10 @@ export interface AssembleOptions {
     baseNote?: string;
     /** Patches `play.exe`'s icon resource in place; `setExeIcon` by default. */
     patchExe?: (exe: string, ico: string) => Promise<void>;
+    /** `game/roves-game.json` (mods and DLC): the game's name, version, mods flag, DLC key. */
+    gameIdentity?: Buffer;
+    /** Signed DLC files, written to `dlc/<name>` next to `game/`. */
+    dlc?: { name: string; file: string }[];
 }
 
 type Source = { file: string; compress?: boolean } | { bytes: Buffer };
@@ -102,6 +109,7 @@ async function writePackage(
     // Files this tool writes, (package-relative path, source).
     const added: [string, Source][] = [];
     const addedDirs = [gameDir];
+    const identityFile = `${gameDir}/${GAME_IDENTITY_FILE}`;
     if (options.packed) {
         const { dir, files, compressed } = options.packed;
         for (const name of files) {
@@ -112,7 +120,18 @@ async function writePackage(
     } else {
         for (const rel of await walkDirectory(options.contentDir)) {
             if (rel.endsWith("/")) addedDirs.push(`${gameDir}/${rel.slice(0, -1)}`);
-            else added.push([`${gameDir}/${rel}`, { file: join(options.contentDir, rel) }]);
+            else if (!(options.gameIdentity && rel === GAME_IDENTITY_FILE)) {
+                added.push([`${gameDir}/${rel}`, { file: join(options.contentDir, rel) }]);
+            }
+        }
+    }
+    if (options.gameIdentity) added.push([identityFile, { bytes: options.gameIdentity }]);
+    if (options.dlc?.length) {
+        const dlcDir = joinRel(layout.resourcesDir, DLC_DIR);
+        addedDirs.push(dlcDir);
+        for (const { name, file } of options.dlc) {
+            // `.rovesmod` archives are deflated per entry already.
+            added.push([`${dlcDir}/${name}`, { file, compress: false }]);
         }
     }
     if (options.icon.windowPng) added.push([windowIcon, { file: options.icon.windowPng }]);
@@ -155,6 +174,8 @@ async function writePackage(
         rel === windowIcon ||
         rel === steamAppIdFile ||
         rel === CHECKSUMS ||
+        rel === joinRel(layout.resourcesDir, DLC_DIR) ||
+        rel.startsWith(`${joinRel(layout.resourcesDir, DLC_DIR)}/`) ||
         replaced.has(rel) ||
         // Provenance of a sample game in older bases (release assets are shell only since v0.9.0).
         rel.startsWith("provenance/visual-novel-template-") ||

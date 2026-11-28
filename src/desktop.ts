@@ -5,7 +5,7 @@
  */
 import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { assemble } from "./assemble";
 import { PlayerBase, ROVES_FALLBACK_ICO } from "./base";
 import {
@@ -31,6 +31,17 @@ import {
 import { type DownloadProgress, ensureShellAsset } from "./download";
 import { RovesError } from "./errors";
 import { resolveProjectIcon } from "./icon";
+import {
+    findProjectDir,
+    GAME_IDENTITY_FILE,
+    type GameIdentity,
+    MODS_MIN_SHELL,
+    packMod,
+    readGameIdentity,
+    scratchDir,
+    shellLoadsMods,
+    verifyDlc,
+} from "./mods";
 import { extractZip } from "./zip";
 
 export const DEFAULT_NAME = "roves-game";
@@ -84,6 +95,21 @@ export interface BundleDesktopOptions {
     onStage?: (platform: DesktopPlatform, stage: DesktopStage) => void;
     /** Overrides how `play.exe`'s icon is patched (tests). */
     patchExe?: (exe: string, ico: string) => Promise<void>;
+    /**
+     * Allow third-party mods (default: the game's `package.json` `roves.mods`, else true). DLC
+     * load either way.
+     */
+    mods?: boolean;
+    /**
+     * The game's project folder, with its `package.json` (default: the nearest one upwards from
+     * `contentDir`). Its `name` and `version` are what add-ons are checked against.
+     */
+    projectDir?: string;
+    /** DLC to ship in `dlc/` next to the game: add-on folders (packed and signed) or signed `.rovesmod` files. */
+    dlc?: string[];
+    /** DLC private key file for `dlc` folders (default: `ROVES_DLC_KEY`, then `roves-dlc-key.pem` in the project). */
+    dlcKey?: string;
+    env?: NodeJS.ProcessEnv;
 }
 
 export interface DesktopBundleResult {
@@ -107,6 +133,10 @@ export interface DesktopBundleResult {
     contentLayout: ContentLayout;
     /** Where the icons came from, e.g. `window project (game icon.png 512x512); executable ...`. */
     iconSource: string;
+    /** Third-party mods allowed (`null`: no game identity, so no mods or DLC). */
+    mods: boolean | null;
+    /** DLC shipped in the package, as `dlc/<file>`. */
+    dlc: string[];
     warnings: string[];
 }
 
@@ -196,6 +226,9 @@ export async function bundleDesktop(options: BundleDesktopOptions): Promise<Desk
     const outDir = resolve(options.outDir ?? ".");
     const contentDir = resolve(options.contentDir);
     await mkdir(outDir, { recursive: true });
+    const addons = await prepareAddons(options, contentDir, shellVersion, log);
+    for (const warning of addons.warnings) log(warning);
+    valid.warnings.push(...addons.warnings);
     // Packed once for every platform (the archives are platform independent).
     const packDir =
         contentLayout === "archive" ? await mkdtemp(join(tmpdir(), "roves-content-")) : undefined;
@@ -220,6 +253,8 @@ export async function bundleDesktop(options: BundleDesktopOptions): Promise<Desk
                 shellVersion,
                 steamAppId,
                 packed,
+                identity: addons.identity,
+                dlcFiles: addons.dlc,
                 log,
             });
             result.warnings.unshift(...valid.warnings);
@@ -228,6 +263,87 @@ export async function bundleDesktop(options: BundleDesktopOptions): Promise<Desk
         return results;
     } finally {
         if (packDir) await rm(packDir, { recursive: true, force: true });
+        await addons.cleanup();
+    }
+}
+
+/**
+ * The game identity (`game/roves-game.json`) and the signed DLC files, once for every platform.
+ * Without a `package.json` the package has no mod support (a warning, as for older packages).
+ */
+async function prepareAddons(
+    options: BundleDesktopOptions,
+    contentDir: string,
+    shellVersion: string,
+    log: (message: string) => void,
+): Promise<{
+    identity?: GameIdentity;
+    dlc: { name: string; file: string }[];
+    warnings: string[];
+    cleanup: () => Promise<void>;
+}> {
+    const none = async () => {};
+    const dlcPaths = (options.dlc ?? []).map((path) => resolve(path));
+    const projectDir = options.projectDir
+        ? resolve(options.projectDir)
+        : await findProjectDir(contentDir);
+    if (!projectDir) {
+        if (dlcPaths.length > 0 || options.mods !== undefined) {
+            throw new RovesError(
+                `mods and DLC need the game's package.json (none found from ${contentDir} upwards): pass --project-dir`,
+            );
+        }
+        return {
+            dlc: [],
+            warnings: [
+                `no package.json found from ${contentDir} upwards: the package has no mod or DLC support (--project-dir)`,
+            ],
+            cleanup: none,
+        };
+    }
+    const identity = await readGameIdentity(projectDir, { mods: options.mods });
+    log(
+        `mods: ${GAME_IDENTITY_FILE} ${identity.name}@${identity.version} mods=${identity.mods} dlc-key=${identity.dlcPublicKey ? "yes" : "no"}`,
+    );
+    if (dlcPaths.length === 0) return { identity, dlc: [], warnings: [], cleanup: none };
+    if (!options.shellZip && !shellLoadsMods(shellVersion)) {
+        throw new RovesError(
+            `--dlc needs the player ${MODS_MIN_SHELL} or later (--shell-version ${shellVersion})`,
+        );
+    }
+    const publicKey = identity.dlcPublicKey;
+    if (!publicKey) {
+        throw new RovesError(
+            `--dlc needs the game's DLC key: run "roves dlc keygen" in ${projectDir} (it writes roves.dlcPublicKey)`,
+        );
+    }
+    const scratch = await scratchDir("roves-dlc-");
+    const cleanup = () => rm(scratch, { recursive: true, force: true });
+    try {
+        const dlc: { name: string; file: string }[] = [];
+        for (const path of dlcPaths) {
+            const isDir = (await stat(path).catch(() => null))?.isDirectory();
+            const file = isDir
+                ? (
+                      await packMod({
+                          modDir: path,
+                          outDir: scratch,
+                          keyFile: options.dlcKey,
+                          env: options.env,
+                          log,
+                      })
+                  ).path
+                : path;
+            const manifest = await verifyDlc(file, publicKey);
+            const name = basename(file);
+            if (dlc.some((d) => d.name === name)) throw new RovesError(`two DLC are named ${name}`);
+            dlc.push({ name, file });
+            log(`dlc: ${manifest.id}@${manifest.version} signed for this game`);
+        }
+        return { identity, dlc, warnings: [], cleanup };
+    } catch (error) {
+        await cleanup();
+        throw error;
     }
 }
 
@@ -240,6 +356,8 @@ async function bundleOne(
         stem: string;
         shellVersion: string;
         packed?: PackedContent;
+        identity?: GameIdentity;
+        dlcFiles: { name: string; file: string }[];
         log: (message: string) => void;
     },
 ): Promise<DesktopBundleResult> {
@@ -303,6 +421,10 @@ async function bundleOne(
                 workDir: join(work, "exe"),
                 baseNote: shell.url,
                 patchExe: options.patchExe,
+                gameIdentity: options.identity
+                    ? Buffer.from(`${JSON.stringify(options.identity, null, 2)}\n`, "utf8")
+                    : undefined,
+                dlc: options.dlcFiles,
             },
             archivePath,
         );
@@ -338,6 +460,8 @@ async function bundleOne(
             mcpEnabled: mcp,
             contentLayout: options.packed ? "archive" : "files",
             iconSource: icon.summary,
+            mods: options.identity ? options.identity.mods : null,
+            dlc: options.dlcFiles.map((d) => d.name),
             warnings,
         };
     } finally {
