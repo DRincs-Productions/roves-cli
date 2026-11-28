@@ -1,0 +1,25 @@
+name: Release
+
+# On a version tag: build the mod, pack it and attach the .rovesmod to the GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run check
+      - run: npm test -- --run
+      - run: npm run pack
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" ./*.rovesmod --title "{{name}} ${{ github.ref_name }}"

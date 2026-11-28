@@ -8,7 +8,7 @@ export default defineConfig({
             name: "text-loader",
             enforce: "pre",
             async load(id) {
-                if (!id.endsWith(".txt")) return null;
+                if (!id.endsWith(".txt") && !id.endsWith(".tmpl")) return null;
                 return `export default ${JSON.stringify(await readFile(id, "utf8"))};`;
             },
         },

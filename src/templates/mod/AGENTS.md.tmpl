@@ -1,0 +1,20 @@
+# Developing this {{kindLabel}}
+
+This project is a {{kindLabel}} for the Roves game **{{gameName}}**: `src/index.ts` (built by tsup
+into `dist/index.js`) runs inside the game, `overrides/` replaces game files. Read the
+**roves-mods** agent skill (`npx skills add DRincs-Productions/roves --skill roves-mods`) before
+changing the build or `package.json`.
+
+## Rules
+
+- Libraries the game shares are the `peerDependencies`. Never bundle them and never import a
+  second copy: `tsup.config.ts` points every import of them at the game's own copy
+  (`/__mods/_shared/<package>.js`). Two copies of libraries such as `pixi.js`, `@drincs/pixi-vn`,
+  `tone` or `howler` break the game. Import them from the package root only.
+- Other libraries go in `dependencies` and are bundled.
+- Keep `package.json` `roves.game` in step with the game versions this {{kindLabel}} supports
+  (npm ranges).
+- `npm run build`, `npm run check` and `npm test` must pass; try the result in the game with
+  `npm start` (it restarts the game when `dist/` changes).
+- Pack with `npm run pack`; check against a packaged game with
+  `npx roves mod check --game <unzipped game>`.

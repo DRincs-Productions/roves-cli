@@ -1,0 +1,12 @@
+import { defineMod } from "@drincs/roves-api/mods";
+{{sharedImportExample}}
+/**
+ * The add-on's entry point. The game calls `activate` once, at startup, with the API object it
+ * passes to `mods.loadAll(api)`: ask the game's developer (or its mod kit) what it contains.
+ * Files in `overrides/` replace the game's files without any code.
+ */
+export default defineMod({
+    activate(api, info) {
+        console.log(`${info.name} ${info.version} loaded`, api);
+    },
+});

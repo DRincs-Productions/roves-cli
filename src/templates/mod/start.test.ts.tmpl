@@ -1,0 +1,6 @@
+import { expect, test } from "vitest";
+import mod from "../src/index";
+
+test("exports an activate function", () => {
+    expect(typeof mod.activate).toBe("function");
+});

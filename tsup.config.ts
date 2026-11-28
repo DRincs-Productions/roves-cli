@@ -17,7 +17,7 @@ export default defineConfig([
         clean: true,
         bundle: true,
         splitting: true,
-        loader: { ".txt": "text" },
+        loader: { ".txt": "text", ".tmpl": "text" },
         outExtension() {
             return { js: ".mjs" };
         },

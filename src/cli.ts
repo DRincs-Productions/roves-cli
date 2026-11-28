@@ -20,6 +20,8 @@ import { bundleDesktop, DEFAULT_NAME } from "./desktop";
 import { type DownloadProgress, defaultCacheDir, ensureShellAsset } from "./download";
 import { RovesError } from "./errors";
 import { ANDROID_ORIENTATIONS, buildAndroid, buildIos } from "./mobile";
+import { createMod } from "./create";
+import { askCreateOptions } from "./create-prompts";
 import { checkMod, devMod, initMod, packMod } from "./mods";
 
 /** The API functions the commands call; replaceable in tests. */
@@ -29,6 +31,9 @@ export interface CliDependencies {
     buildIos: typeof buildIos;
     ensureShellAsset: typeof ensureShellAsset;
     packMod: typeof packMod;
+    createMod: typeof createMod;
+    askCreateOptions: typeof askCreateOptions;
+    isInteractive: () => boolean;
     checkMod: typeof checkMod;
     devMod: typeof devMod;
     initMod: typeof initMod;
@@ -42,6 +47,9 @@ const defaultDependencies: CliDependencies = {
     buildIos,
     ensureShellAsset,
     packMod,
+    createMod,
+    askCreateOptions,
+    isInteractive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
     checkMod,
     devMod,
     initMod,
@@ -462,6 +470,66 @@ function addModCommands(
     log: (message: string) => void,
 ): void {
     const mod = program.command("mod").description("make, test and pack mods and DLC");
+    mod.command("create")
+        .description(
+            "create a TypeScript mod or DLC project (tsup, Biome, Vitest) for a game; asks for what is missing",
+        )
+        .argument("[dir]", "where to create it (default: the id; a DLC goes in <game>/dlc-src/)")
+        .addOption(new Option("--kind <kind>", "mod or dlc").choices(["mod", "dlc"]))
+        .option(
+            "--game <path>",
+            "mod: the unzipped Roves package of the game (or .app); DLC: the game's source project",
+        )
+        .option("--id <name>", "the add-on id: an npm package name, e.g. @me/new-ending")
+        .option("--name <name>", "the name shown to players")
+        .option("--description <text>", "a short description")
+        .option("--author <name>", "the author")
+        .option(
+            "--shared <list>",
+            "libraries of the game to use, comma separated (default: the single-instance ones it shares)",
+        )
+        .option("--install", "run npm install in the new project")
+        .option("--git", "run git init in the new project")
+        .option("-y, --yes", "ask nothing: use the options and the defaults")
+        .action(async (dir: string | undefined, options) => {
+            const given = {
+                kind: options.kind,
+                game: options.game,
+                id: options.id,
+                name: options.name,
+                description: options.description,
+                author: options.author,
+                shared:
+                    options.shared === undefined
+                        ? undefined
+                        : String(options.shared)
+                              .split(",")
+                              .map((lib: string) => lib.trim())
+                              .filter(Boolean),
+                dir,
+                install: options.install,
+                git: options.git,
+            };
+            let create;
+            if (options.yes || !deps.isInteractive()) {
+                for (const [flag, value] of [
+                    ["--kind", given.kind],
+                    ["--game", given.game],
+                    ["--id", given.id],
+                ]) {
+                    if (!value)
+                        throw new RovesError(
+                            `${flag} is required without a terminal (or drop --yes)`,
+                        );
+                }
+                create = { ...given, kind: given.kind, game: given.game, id: given.id };
+            } else {
+                create = await deps.askCreateOptions(given);
+            }
+            const result = await deps.createMod({ ...create, log });
+            for (const warning of result.warnings) log(`warning: ${warning}`);
+            deps.stdout(`${result.dir}\n`);
+        });
     mod.command("init")
         .description(
             "create a mod (package.json, index.js, overrides/) or add the roves section to a package.json",

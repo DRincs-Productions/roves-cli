@@ -60,6 +60,7 @@
     "cli"
   ],
   "dependencies": {
+    "@clack/prompts": "^1.9.0",
     "@jimp/core": "^1.7.0",
     "@jimp/js-png": "^1.7.0",
     "@jimp/plugin-resize": "^1.7.0",

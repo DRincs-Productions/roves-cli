@@ -1,0 +1,48 @@
+import { readFileSync } from "node:fs";
+import { defineConfig, type Options } from "tsup";
+
+// Libraries the game shares with add-ons are the peerDependencies. They are never bundled: every
+// import of one points at the game's own copy, which the Roves player serves at
+// /__mods/_shared/<package>.js. Two copies of libraries such as pixi.js break the game.
+const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+const shared: string[] = Object.keys(pkg.peerDependencies ?? {});
+
+const rovesSharedLibraries: NonNullable<Options["esbuildPlugins"]>[number] = {
+    name: "roves-shared-libraries",
+    setup(build) {
+        build.onResolve({ filter: /^[^./]/ }, (args) => {
+            const lib = shared.find(
+                (name) => args.path === name || args.path.startsWith(`${name}/`),
+            );
+            if (!lib) return undefined;
+            if (args.path !== lib) {
+                return {
+                    errors: [
+                        {
+                            text: `import from "${lib}", not "${args.path}": the game shares only the package root`,
+                        },
+                    ],
+                };
+            }
+            return { path: `/__mods/_shared/${lib}.js`, external: true };
+        });
+    },
+};
+
+export default defineConfig({
+    entry: { index: "src/index.ts" },
+    format: ["esm"],
+    platform: "browser",
+    target: "es2022",
+    dts: false,
+    treeshake: true,
+    minify: true,
+    clean: true,
+    bundle: true,
+    // Everything that is not shared by the game is bundled into the add-on.
+    noExternal: [/.*/],
+    esbuildPlugins: [rovesSharedLibraries],
+    outExtension() {
+        return { js: ".js" };
+    },
+});

@@ -18,7 +18,7 @@ export default defineConfig({
     sourcemap: false,
     dts: false,
     clean: true,
-    loader: { ".txt": "text" },
+    loader: { ".txt": "text", ".tmpl": "text" },
     esbuildPlugins: [
         {
             // `debug` (a transitive dependency) optionally requires supports-color inside a

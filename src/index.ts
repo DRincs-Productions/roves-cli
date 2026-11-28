@@ -171,3 +171,12 @@ export {
     sharedChunkName,
     validPackageName,
 } from "./mods";
+export {
+    CREATE_VERSIONS,
+    type CreateModOptions,
+    type CreateModResult,
+    createMod,
+    defaultAddonDir,
+    type GameForAddon,
+    readGameForAddon,
+} from "./create";

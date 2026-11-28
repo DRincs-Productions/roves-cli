@@ -1,0 +1,41 @@
+# {{name}}
+
+{{description}}
+
+A {{kindLabel}} for **{{gameName}}** (version {{gameRange}}), made with
+[Roves](https://github.com/DRincs-Productions/roves-wiki) — see the wiki page "Mods and DLC".
+
+## Develop
+
+```bash
+npm install
+npm run dev      # rebuilds dist/ on every change
+npm start        # runs the game with this {{kindLabel}} loaded (restarts on changes)
+```
+
+{{devNotes}}
+
+- `src/index.ts` is the code that runs in the game: `activate(api, info)` receives the object the
+  game passes to `mods.loadAll(api)`.
+- `overrides/` holds files that replace or add the game's own files, at the same path as in the
+  game's build (`overrides/assets/backgrounds/park.png` replaces `assets/backgrounds/park.png`).
+- `cover.png` is the image the game shows for this {{kindLabel}}: replace the placeholder.
+
+## Libraries shared by the game
+
+{{sharedNotes}}
+
+## Pack
+
+```bash
+npm run pack     # builds and writes {{packedFile}}
+```
+
+{{packNotes}}
+
+## Check
+
+```bash
+npm run check    # Biome
+npm test         # Vitest
+```

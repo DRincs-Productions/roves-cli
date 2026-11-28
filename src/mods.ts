@@ -29,7 +29,12 @@ export const DEV_MOD_SWITCH = "--roves-dev-mod=";
 export const MODS_MIN_SHELL = "v0.9.2";
 const COVERS = ["cover.png", "cover.jpg", "cover.webp"];
 /** Never packed: dependencies, VCS data and packed add-ons. */
-const ALWAYS_IGNORED = ["**/node_modules/**", "**/.git/**", `**/*${ADDON_EXTENSION}`];
+const ALWAYS_IGNORED = [
+    "**/node_modules/**",
+    "**/.git/**",
+    `**/*${ADDON_EXTENSION}`,
+    "**/.gitkeep",
+];
 /** Fixed entry time, so packing the same add-on twice gives the same archive. */
 const ENTRY_TIME = new Date(Date.UTC(2020, 0, 1));
 
@@ -597,8 +602,10 @@ export interface PackagedGame {
 
 /** The player and `game/` of an unzipped package folder (`<name>` or `<name>.app`). */
 export async function findPackagedGame(bundleDir: string): Promise<PackagedGame> {
-    const dir = resolve(bundleDir);
     const exists = async (path: string) => Boolean(await stat(path).catch(() => null));
+    // `-n game` makes `game/` on Windows/Linux and `game.app` on macOS: accept either name.
+    let dir = resolve(bundleDir);
+    if (!(await exists(dir)) && (await exists(`${dir}.app`))) dir = `${dir}.app`;
     let executable: string;
     let gameDir: string;
     if (await exists(join(dir, "play.exe"))) {
