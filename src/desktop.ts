@@ -5,7 +5,7 @@
  */
 import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { assemble } from "./assemble";
 import { PlayerBase, ROVES_FALLBACK_ICO } from "./base";
 import {
@@ -32,15 +32,17 @@ import { type DownloadProgress, ensureShellAsset } from "./download";
 import { RovesError } from "./errors";
 import { resolveProjectIcon } from "./icon";
 import {
+    addonFileName,
     findProjectDir,
     GAME_IDENTITY_FILE,
     type GameIdentity,
     MODS_MIN_SHELL,
     packMod,
+    readDlcRegistry,
     readGameIdentity,
+    recognizedDlc,
     scratchDir,
     shellLoadsMods,
-    verifyDlc,
 } from "./mods";
 import { extractZip } from "./zip";
 
@@ -105,11 +107,11 @@ export interface BundleDesktopOptions {
      * `contentDir`). Its `name` and `version` are what add-ons are checked against.
      */
     projectDir?: string;
-    /** DLC to ship in `dlc/` next to the game: add-on folders (packed and signed) or signed `.rovesmod` files. */
+    /**
+     * DLC to ship in `dlc/` next to the game: DLC folders (packed and registered in the project's
+     * `roves-dlc.json`) or `.rovesmod` files already registered there.
+     */
     dlc?: string[];
-    /** DLC private key file for `dlc` folders (default: `ROVES_DLC_KEY`, then `roves-dlc-key.pem` in the project). */
-    dlcKey?: string;
-    env?: NodeJS.ProcessEnv;
 }
 
 export interface DesktopBundleResult {
@@ -303,7 +305,7 @@ async function prepareAddons(
     }
     const identity = await readGameIdentity(projectDir, { mods: options.mods });
     log(
-        `mods: ${GAME_IDENTITY_FILE} ${identity.name}@${identity.version} mods=${identity.mods} dlc-key=${identity.dlcPublicKey ? "yes" : "no"}`,
+        `mods: ${GAME_IDENTITY_FILE} ${identity.name}@${identity.version} mods=${identity.mods} official-dlc=${Object.keys(identity.dlc).length}`,
     );
     if (dlcPaths.length === 0) return { identity, dlc: [], warnings: [], cleanup: none };
     if (!options.shellZip && !shellLoadsMods(shellVersion)) {
@@ -311,34 +313,27 @@ async function prepareAddons(
             `--dlc needs the player ${MODS_MIN_SHELL} or later (--shell-version ${shellVersion})`,
         );
     }
-    const publicKey = identity.dlcPublicKey;
-    if (!publicKey) {
-        throw new RovesError(
-            `--dlc needs the game's DLC key: run "roves dlc keygen" in ${projectDir} (it writes roves.dlcPublicKey)`,
-        );
-    }
     const scratch = await scratchDir("roves-dlc-");
     const cleanup = () => rm(scratch, { recursive: true, force: true });
     try {
-        const dlc: { name: string; file: string }[] = [];
+        // Folders are packed (and registered) first, then every DLC must be registered.
+        const files: string[] = [];
         for (const path of dlcPaths) {
             const isDir = (await stat(path).catch(() => null))?.isDirectory();
-            const file = isDir
-                ? (
-                      await packMod({
-                          modDir: path,
-                          outDir: scratch,
-                          keyFile: options.dlcKey,
-                          env: options.env,
-                          log,
-                      })
-                  ).path
-                : path;
-            const manifest = await verifyDlc(file, publicKey);
-            const name = basename(file);
+            files.push(
+                isDir
+                    ? (await packMod({ modDir: path, outDir: scratch, projectDir, log })).path
+                    : path,
+            );
+        }
+        identity.dlc = await readDlcRegistry(projectDir);
+        const dlc: { name: string; file: string }[] = [];
+        for (const file of files) {
+            const manifest = await recognizedDlc(file, identity.dlc);
+            const name = addonFileName(manifest.id, "dlc", manifest.version);
             if (dlc.some((d) => d.name === name)) throw new RovesError(`two DLC are named ${name}`);
             dlc.push({ name, file });
-            log(`dlc: ${manifest.id}@${manifest.version} signed for this game`);
+            log(`dlc: ${manifest.id}@${manifest.version} is an official DLC of this game`);
         }
         return { identity, dlc, warnings: [], cleanup };
     } catch (error) {

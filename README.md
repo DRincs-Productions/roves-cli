@@ -43,30 +43,29 @@ roves bundle -c dist --compression-level 6 --max-archive-size 500MB   # smaller 
 roves bundle -c dist --content-layout files            # loose files instead of archives
 ```
 
-| Option                      | Description                                                                                                                                                   |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-c, --content-dir <dir>`   | Built web game with `index.html` at its root (required).                                                                                                      |
-| `-p, --platform <platform>` | `windows`, `macos`, `linux`; repeatable or comma separated. Default: host.                                                                                    |
-| `--content-layout <layout>` | `archive` (default with player v0.9.1+) or `files` (loose copy). See "Packed game content".                                                                   |
-| `--compression-level <0-9>` | Archive compression: `0` (default, stored: fastest in game) to `9` (smallest download). Media are always stored.                                              |
-| `--max-archive-size <size>` | Largest asset archive, e.g. `300MB` (default), `1GiB`; bigger folders are split. At least `1MB`.                                                              |
-| `--icon-png <file>`         | Square PNG project icon (16-2048 px, at most 8 MiB). Default: `<content-dir>/icon.png`.                                                                       |
-| `--icon-ico <file>`         | `.ico` for `play.exe`. Default: generated from the PNG, else `icon.ico`/`favicon.ico`.                                                                        |
-| `--steam`                   | Steam variant (Steamworks redistributable next to the executable).                                                                                            |
-| `--steam-app-id <id>`       | Writes `steam_appid.txt` next to the executable (development). Requires `--steam`.                                                                            |
-| `--enable-mcp`              | MCP-enabled development player. Not with `--steam`.                                                                                                           |
-| `--no-mods`                 | Do not load third-party mods (default: the game's `package.json` `roves.mods`, else allowed). DLC still load. See "Mods and DLC".                             |
-| `--dlc <path>`              | Ship a DLC (add-on folder, packed and signed, or a signed `.rovesmod`) in `dlc/` next to `game/`. Repeatable.                                                 |
-| `--project-dir <dir>`       | The game's project folder with its `package.json`. Default: the nearest one above the content dir.                                                            |
-| `--dlc-key <file>`          | DLC private key for `--dlc` folders (also `ROVES_DLC_KEY`; default `roves-dlc-key.pem` in the project).                                                      |
-| `-n, --name <name>`         | Zip/folder base name (default `roves-game`).                                                                                                                  |
-| `-o, --out-dir <dir>`       | Output directory (default `.`).                                                                                                                               |
-| `--no-extract`              | Only the zip, no unzipped folder.                                                                                                                             |
-| `--shell-version <tag>`     | Engine release of the player (default: pinned, see below).                                                                                                    |
-| `--shell-zip <file>`        | Local player zip instead of a download (one platform).                                                                                                        |
-| `--no-cache` / `--refresh`  | Skip the cache / re-download.                                                                                                                                 |
-| `--json`                    | JSON results on stdout.                                                                                                                                       |
-| `--progress <format>`       | `plain` (default; download percentages on a terminal) or `json`: one `{"type":"progress","platform","stage","fraction"}` line per event on stderr, for tools. |
+| Option                      | Description                                                                                                                                                     |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-c, --content-dir <dir>`   | Built web game with `index.html` at its root (required).                                                                                                        |
+| `-p, --platform <platform>` | `windows`, `macos`, `linux`; repeatable or comma separated. Default: host.                                                                                      |
+| `--content-layout <layout>` | `archive` (default with player v0.9.1+) or `files` (loose copy). See "Packed game content".                                                                     |
+| `--compression-level <0-9>` | Archive compression: `0` (default, stored: fastest in game) to `9` (smallest download). Media are always stored.                                                |
+| `--max-archive-size <size>` | Largest asset archive, e.g. `300MB` (default), `1GiB`; bigger folders are split. At least `1MB`.                                                                |
+| `--icon-png <file>`         | Square PNG project icon (16-2048 px, at most 8 MiB). Default: `<content-dir>/icon.png`.                                                                         |
+| `--icon-ico <file>`         | `.ico` for `play.exe`. Default: generated from the PNG, else `icon.ico`/`favicon.ico`.                                                                          |
+| `--steam`                   | Steam variant (Steamworks redistributable next to the executable).                                                                                              |
+| `--steam-app-id <id>`       | Writes `steam_appid.txt` next to the executable (development). Requires `--steam`.                                                                              |
+| `--enable-mcp`              | MCP-enabled development player. Not with `--steam`.                                                                                                             |
+| `--no-mods`                 | Do not load third-party mods (default: the game's `package.json` `roves.mods`, else allowed). DLC still load. See "Mods and DLC".                               |
+| `--dlc <path>`              | Ship an official DLC in `dlc/` next to `game/`: a DLC folder (packed and registered in the project's `roves-dlc.json`) or a registered `.rovesmod`. Repeatable. |
+| `--project-dir <dir>`       | The game's project folder with its `package.json`. Default: the nearest one above the content dir.                                                              |
+| `-n, --name <name>`         | Zip/folder base name (default `roves-game`).                                                                                                                    |
+| `-o, --out-dir <dir>`       | Output directory (default `.`).                                                                                                                                 |
+| `--no-extract`              | Only the zip, no unzipped folder.                                                                                                                               |
+| `--shell-version <tag>`     | Engine release of the player (default: pinned, see below).                                                                                                      |
+| `--shell-zip <file>`        | Local player zip instead of a download (one platform).                                                                                                          |
+| `--no-cache` / `--refresh`  | Skip the cache / re-download.                                                                                                                                   |
+| `--json`                    | JSON results on stdout.                                                                                                                                         |
+| `--progress <format>`       | `plain` (default; download percentages on a terminal) or `json`: one `{"type":"progress","platform","stage","fraction"}` line per event on stderr, for tools.   |
 
 Outputs: one platform gives `<name>.zip` (one `<name>/` folder inside, or `<name>.app/` at the
 root on macOS) and the unzipped `<name>/` (`<name>.app`); several platforms give
@@ -79,19 +78,19 @@ root on macOS) and the unzipped `<name>/` (`<name>.app`); several platforms give
 
 `roves bundle` writes `game/roves-game.json` from the game's `package.json` (found above the
 content dir, or `--project-dir`): its `name` and `version` (what add-ons are checked against),
-whether mods are allowed (`roves.mods`, or `--no-mods`), the DLC public key
-(`roves.dlcPublicKey`) and the libraries the game shares (`roves.shared`). Without a
+whether mods are allowed (`roves.mods`, or `--no-mods`), the libraries the game shares
+(`roves.shared`) and the official DLC from the project's `roves-dlc.json`. Without a
 `package.json` the package has no mod or DLC support (a warning). The player loads add-ons from
-player v0.9.2.
+player v0.9.2: it lists a DLC only when its `.rovesmod` file is the registered build (same
+SHA-256), and enables it by default; with the same id twice, the highest version wins.
 
-| Command | What it does |
-| ------- | ------------ |
-| `roves dlc keygen [--project-dir <dir>]` | Creates the game's DLC key pair once: the private key in `roves-dlc-key.pem` (added to `.gitignore`; for CI put its content in the `ROVES_DLC_KEY` secret), the public key in `package.json` `roves.dlcPublicKey`. Only the key's owner can make DLC. |
-| `roves bundle --dlc <path>` | Ships a DLC in `dlc/` next to `game/`: an add-on folder (packed and signed with `--dlc-key`/`ROVES_DLC_KEY`/`roves-dlc-key.pem`) or a signed `.rovesmod`. The signature is checked against the game's key. Repeatable. |
-| `roves mod init [dir] --game <package> \| --game-name <name> [--kind dlc]` | Creates `package.json` (`name`, `version`, `main`, `files`, `roves.game` with `^<game version>`), `index.js` (a `defineMod` starter) and `overrides/`; in an existing project only adds the `roves` section. |
-| `roves mod dev [dir] --game <package>` | Runs an unzipped package of the game with the mod folder loaded unpacked (`--roves-dev-mod`, no signature needed). `overrides/` is read live; other changes restart the game (`--no-watch` to turn it off). |
-| `roves mod check [mod] --game <package> [--json]` | The player's checks against that package: game name and version range, shared libraries, `main`, DLC signature. Exit code 1 when incompatible. |
-| `roves mod pack [dir] [-o <dir>] [--dlc-key <file>] [--json]` | Writes `<id>-<version>.rovesmod`: the files `npm pack` would take (`files`, plus `package.json` and `cover.*`; never `node_modules`, `.git` or the key), `dependencies` rewritten to the installed versions, deterministic. A DLC is signed. |
+| Command                                                                    | What it does                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `roves mod init [dir] --game <package> \| --game-name <name> [--kind dlc]` | Creates `package.json` (`name`, `version`, `main`, `files`, `roves.game` with `^<game version>`), `index.js` (a `defineMod` starter) and `overrides/`; in an existing project only adds the `roves` section.                                                                                                                                                                                                                              |
+| `roves mod dev [dir] --game <package>`                                     | Runs an unzipped package of the game with the folder loaded unpacked (`--roves-dev-mod`; a DLC there needs no registration). `overrides/` is read live; other changes restart the game (`--no-watch` to turn it off).                                                                                                                                                                                                                     |
+| `roves mod check [mod] --game <package> [--json]`                          | The player's checks against that package: game name and version range, shared libraries, `main`, and for a DLC whether that `.rovesmod` is registered. Exit code 1 when incompatible.                                                                                                                                                                                                                                                     |
+| `roves mod pack [dir] [-o <dir>] [--project-dir <game>] [--json]`          | Writes the files `npm pack` would take (`files`, plus `package.json` and `cover.*`; never `node_modules` or `.git`), `dependencies` rewritten to the installed versions, deterministic. A mod becomes `<id>-<version>.rovesmod`; a DLC becomes `<id>.rovesmod` and is registered (id, version, SHA-256) in the game project's `roves-dlc.json` (found above the DLC folder, or `--project-dir`). Keep `roves-dlc.json` in the repository. |
+| `roves bundle --dlc <path>`                                                | Ships an official DLC in `dlc/` next to `game/`: a DLC folder (packed and registered first) or a `.rovesmod` already registered. Repeatable. A new DLC, or a new version, is recognized only by game builds made after it was registered.                                                                                                                                                                                                 |
 
 An add-on's `package.json`: `name` (id), `displayName`, `description`, `author`, `version`,
 `main`, `files`, `peerDependencies` (libraries reused from the game), `dependencies` (bundled),

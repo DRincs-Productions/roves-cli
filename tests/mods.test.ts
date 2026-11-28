@@ -1,24 +1,20 @@
-import { createHash, verify, createPublicKey } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { bundleDesktop } from "../src/desktop";
 import {
+    addonFileName,
     checkMod,
     findPackagedGame,
-    initDlcKey,
     initMod,
     packMod,
-    privateKeyFromSeed,
-    publicKeyBase64,
     readGameIdentity,
-    signatureFile,
-    signedMessage,
     validPackageName,
 } from "../src/mods";
+import { sha256File } from "../src/zip";
 import { dist, fileNames, linuxBase, readZip, tempDir, windowsBase, write } from "./helpers";
 
-const SEED = Buffer.alloc(32, 7);
+const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
 /** One zip entry as text (a missing entry fails the test). */
 function text(zip: Awaited<ReturnType<typeof readZip>>, name: string): string {
@@ -26,7 +22,6 @@ function text(zip: Awaited<ReturnType<typeof readZip>>, name: string): string {
     if (!entry) throw new Error(`${name} is not in the zip`);
     return entry.bytes.toString("utf8");
 }
-const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
 /** A game project: package.json + dist/. */
 async function gameProject(root: string, roves: Record<string, unknown> = {}): Promise<string> {
@@ -55,64 +50,35 @@ async function modFolder(root: string, pkg: Record<string, unknown>): Promise<st
     return root;
 }
 
-describe("signatures", () => {
-    // The same vector as the player's `signature_matches_roves_cli` (mods.rs).
-    it("matches the player's format", () => {
-        const key = privateKeyFromSeed(SEED);
-        expect(publicKeyBase64(key)).toBe("6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=");
-        const hello = createHash("sha256").update("hello").digest("hex");
-        const file = JSON.parse(signatureFile({ "a.txt": hello }, key));
-        expect(file.signature).toBe(
-            "EP/2mIItr5dbtcYTndI9032Noh1FI5nGnIlFaz4GzmBCJ7zsrQT65JiU9Za0uFyEhWJRAvP9wYNYqDOafuB0Cg==",
-        );
-        expect(signedMessage({ "b/c": "2", a: "1" })).toBe(
-            "roves-dlc-signature-v1\n1  a\n2  b/c\n",
-        );
-    });
-
-    it("package names follow npm", () => {
-        for (const good of ["mod", "@author/new-ending", "a.b_c~d"])
-            expect(validPackageName(good)).toBe(true);
-        for (const bad of ["", "Mod", "@author", "@a/b/c", ".x", "a b"])
-            expect(validPackageName(bad)).toBe(false);
-    });
+const dlcManifest = (version = "1.0.0") => ({
+    name: "chapter-6",
+    version,
+    roves: { kind: "dlc", game: { name: "mygame", version: "^1.5.0" } },
 });
 
-describe("DLC key", () => {
-    it("creates the key once, ignores it in git and writes the public key", async () => {
-        const project = await gameProject(await tempDir());
-        await write(project, ".gitignore", "node_modules");
-        const first = await initDlcKey(project);
-        expect(first.created).toBe(true);
-        expect(await readFile(join(project, ".gitignore"), "utf8")).toContain(
-            "\nroves-dlc-key.pem\n",
-        );
-        const pkg = JSON.parse(await readFile(join(project, "package.json"), "utf8"));
-        expect(pkg.roves.dlcPublicKey).toBe(first.publicKey);
-        const second = await initDlcKey(project);
-        expect(second).toEqual({ ...first, created: false });
-        const identity = await readGameIdentity(project);
-        expect(identity).toEqual({
-            format: 1,
-            name: "mygame",
-            version: "1.5.2",
-            mods: true,
-            dlcPublicKey: first.publicKey,
-            shared: {},
-        });
-        expect((await readGameIdentity(project, { mods: false })).mods).toBe(false);
+describe("names", () => {
+    it("package names follow npm; DLC files have no version", () => {
+        for (const good of ["mod", "@author/new-ending", "a.b_c~d"]) {
+            expect(validPackageName(good)).toBe(true);
+        }
+        for (const bad of ["", "Mod", "@author", "@a/b/c", ".x", "a b"]) {
+            expect(validPackageName(bad)).toBe(false);
+        }
+        expect(addonFileName("@me/x", "mod", "1.2.0")).toBe("me-x-1.2.0.rovesmod");
+        expect(addonFileName("@me/x", "dlc", "1.2.0")).toBe("me-x.rovesmod");
     });
 });
 
 describe("mod pack", () => {
-    it("packs the files npm would, with exact bundled versions", async () => {
+    it("packs the files npm would, with exact bundled versions, deterministically", async () => {
         const tmp = await tempDir();
         const mod = await modFolder(join(tmp, "mod"), {
             files: ["dist", "overrides"],
             dependencies: { "lodash-es": "^4.17.0" },
         });
         const result = await packMod({ modDir: mod, outDir: join(tmp, "out") });
-        expect(result).toMatchObject({ id: "@me/new-ending", kind: "mod", signed: false });
+        expect(result).toMatchObject({ id: "@me/new-ending", kind: "mod" });
+        expect(result.registered).toBeUndefined();
         expect(result.path).toBe(join(tmp, "out", "me-new-ending-1.0.0.rovesmod"));
         const zip = await readZip(result.path);
         expect(fileNames(zip).sort()).toEqual([
@@ -121,90 +87,84 @@ describe("mod pack", () => {
             "overrides/a.txt",
             "package.json",
         ]);
-        const packed = JSON.parse(text(zip, "package.json"));
-        expect(packed.dependencies).toEqual({ "lodash-es": "4.17.21" });
-        // Packing again gives the same bytes.
+        expect(JSON.parse(text(zip, "package.json")).dependencies).toEqual({
+            "lodash-es": "4.17.21",
+        });
         const again = await packMod({ modDir: mod, outDir: join(tmp, "out2") });
-        expect(await readFile(again.path)).toEqual(await readFile(result.path));
+        expect(again.sha256).toBe(result.sha256);
+        expect(await sha256File(result.path)).toBe(result.sha256);
     });
 
-    it("refuses a missing main and an unsigned DLC; signs a DLC with the key", async () => {
+    it("refuses a missing main; a DLC is named without version and registered per version", async () => {
         const tmp = await tempDir();
         const broken = await modFolder(join(tmp, "broken"), { files: ["overrides"] });
         await expect(packMod({ modDir: broken, outDir: tmp })).rejects.toThrow(
             /"main" dist\/index.js/,
         );
-        const dlc = await modFolder(join(tmp, "dlc"), {
-            roves: { kind: "dlc", game: { name: "mygame" } },
+        // A DLC outside the game's project cannot be registered.
+        const stray = await modFolder(join(tmp, "stray"), dlcManifest());
+        await expect(packMod({ modDir: stray, outDir: tmp })).rejects.toThrow(/--project-dir/);
+
+        const project = await gameProject(join(tmp, "game"));
+        const dlc = await modFolder(join(project, "dlc-src", "chapter-6"), dlcManifest());
+        const first = await packMod({ modDir: dlc, outDir: join(tmp, "v1") });
+        expect(first.path).toBe(join(tmp, "v1", "chapter-6.rovesmod"));
+        expect(first.registered).toBe(join(project, "roves-dlc.json"));
+        await write(dlc, "package.json", json({ ...dlcManifest("1.1.0"), main: "dist/index.js" }));
+        const second = await packMod({ modDir: dlc, outDir: join(tmp, "v2") });
+        const registry = JSON.parse(await readFile(join(project, "roves-dlc.json"), "utf8"));
+        expect(registry).toEqual({
+            format: 1,
+            dlc: { "chapter-6": { "1.0.0": first.sha256, "1.1.0": second.sha256 } },
         });
-        await expect(packMod({ modDir: dlc, outDir: tmp, env: {} })).rejects.toThrow(
-            /roves dlc keygen/,
-        );
-        const key = privateKeyFromSeed(SEED);
-        const pem = key.export({ format: "pem", type: "pkcs8" }).toString();
-        const result = await packMod({
-            modDir: dlc,
-            outDir: join(tmp, "out"),
-            env: { ROVES_DLC_KEY: Buffer.from(pem).toString("base64") },
-        });
-        expect(result.signed).toBe(true);
-        const zip = await readZip(result.path);
-        expect(fileNames(zip)).not.toContain("node_modules/lodash-es/package.json");
-        const signature = JSON.parse(text(zip, "roves-signature.json"));
-        expect(Object.keys(signature.files).sort()).toEqual(
-            fileNames(zip)
-                .filter((n) => n !== "roves-signature.json")
-                .sort(),
-        );
-        expect(
-            verify(
-                null,
-                Buffer.from(signedMessage(signature.files)),
-                createPublicKey(key),
-                Buffer.from(signature.signature, "base64"),
-            ),
-        ).toBe(true);
+        expect((await readGameIdentity(project)).dlc).toEqual(registry.dlc);
+        // An explicit project of another game is refused.
+        await write(join(tmp, "other"), "package.json", json({ name: "other", version: "1.0.0" }));
+        await expect(
+            packMod({ modDir: dlc, outDir: tmp, projectDir: join(tmp, "other") }),
+        ).rejects.toThrow(/not of mygame/);
     });
 });
 
 describe("bundle with mods and DLC", () => {
-    it("writes the game identity and ships signed DLC; check and dev find the game", async () => {
+    it("writes the game identity with the official DLC; check finds the game", async () => {
         const tmp = await tempDir();
         const project = await gameProject(join(tmp, "game"));
-        await initDlcKey(project);
-        const dlc = await modFolder(join(project, "dlc-src", "chapter-6"), {
-            name: "chapter-6",
-            roves: { kind: "dlc", game: { name: "mygame", version: "^1.5.0" } },
-        });
+        const dlc = await modFolder(join(project, "dlc-src", "chapter-6"), dlcManifest());
         const [result] = await bundleDesktop({
             contentDir: join(project, "dist"),
             platforms: ["windows"],
             shellZip: await windowsBase(tmp),
             dlc: [dlc],
             outDir: join(tmp, "out"),
-            env: {},
             patchExe: async () => {},
         });
         expect(result?.mods).toBe(true);
-        expect(result?.dlc).toEqual(["chapter-6-1.0.0.rovesmod"]);
+        expect(result?.dlc).toEqual(["chapter-6.rovesmod"]);
         const bundleDir = result?.bundleDir as string;
+        const shipped = join(bundleDir, "dlc", "chapter-6.rovesmod");
         const identity = JSON.parse(
             await readFile(join(bundleDir, "game", "roves-game.json"), "utf8"),
         );
-        expect(identity).toMatchObject({ name: "mygame", version: "1.5.2", mods: true });
-        expect(await stat(join(bundleDir, "dlc", "chapter-6-1.0.0.rovesmod"))).toBeTruthy();
+        expect(identity).toEqual({
+            format: 1,
+            name: "mygame",
+            version: "1.5.2",
+            mods: true,
+            dlc: { "chapter-6": { "1.0.0": await sha256File(shipped) } },
+            shared: {},
+        });
         const zip = await readZip(result?.archivePath as string);
         const sums = text(zip, "roves-game/SHA256SUMS.txt");
         expect(sums).toContain("  game/roves-game.json\r\n");
-        expect(sums).toContain("  dlc/chapter-6-1.0.0.rovesmod\r\n");
+        expect(sums).toContain("  dlc/chapter-6.rovesmod\r\n");
 
         const game = await findPackagedGame(bundleDir);
         expect(game.executable).toBe(join(bundleDir, "play.exe"));
-        const shipped = await checkMod({
-            mod: join(bundleDir, "dlc", "chapter-6-1.0.0.rovesmod"),
-            game: bundleDir,
+        expect(await checkMod({ mod: shipped, game: bundleDir })).toMatchObject({
+            compatible: true,
+            problems: [],
         });
-        expect(shipped).toMatchObject({ compatible: true, problems: [] });
 
         // A mod for an older game, with a library the game does not share.
         const mod = await modFolder(join(tmp, "mod"), {
@@ -219,29 +179,31 @@ describe("bundle with mods and DLC", () => {
         ]);
         expect(checked.notChecked).toEqual(["required add-on other"]);
 
-        // A DLC someone else signed is refused at bundle time.
-        const foreign = await packMod({
-            modDir: dlc,
-            outDir: join(tmp, "foreign"),
-            env: {
-                ROVES_DLC_KEY: privateKeyFromSeed(SEED)
-                    .export({ format: "pem", type: "pkcs8" })
-                    .toString(),
-            },
-        });
+        // A DLC built elsewhere (same id and version, other content) is not the official one.
+        const elsewhere = await gameProject(join(tmp, "copy"));
+        const fake = await modFolder(join(elsewhere, "chapter-6"), dlcManifest());
+        await write(fake, "overrides/a.txt", "not official");
+        const forged = await packMod({ modDir: fake, outDir: join(tmp, "fake-out") });
+        expect((await checkMod({ mod: forged.path, game: bundleDir })).problems).toEqual([
+            "DLC chapter-6 1.0.0 differs from the registered build",
+        ]);
         await expect(
             bundleDesktop({
                 contentDir: join(project, "dist"),
                 platforms: ["windows"],
                 shellZip: await windowsBase(join(tmp, "b2")),
-                dlc: [foreign.path],
+                dlc: [forged.path],
                 outDir: join(tmp, "out2"),
                 patchExe: async () => {},
             }),
-        ).rejects.toThrow(/does not match this game's DLC key/);
+        ).rejects.toThrow(/differs from the registered build/);
+        // check takes only packed DLC.
+        expect((await checkMod({ mod: dlc, game: bundleDir })).problems).toEqual([
+            "a DLC must be a .rovesmod file (roves mod pack)",
+        ]);
     });
 
-    it("--no-mods, no package.json, and DLC without a key", async () => {
+    it("--no-mods, and no package.json", async () => {
         const tmp = await tempDir();
         const project = await gameProject(join(tmp, "game"), { mods: true });
         const [off] = await bundleDesktop({
@@ -252,15 +214,7 @@ describe("bundle with mods and DLC", () => {
             outDir: join(tmp, "out"),
         });
         expect(off?.mods).toBe(false);
-        await expect(
-            bundleDesktop({
-                contentDir: join(project, "dist"),
-                platforms: ["linux"],
-                shellZip: await linuxBase(join(tmp, "b")),
-                dlc: [join(tmp, "nothing")],
-                outDir: join(tmp, "out2"),
-            }),
-        ).rejects.toThrow(/roves dlc keygen/);
+        expect(off?.dlc).toEqual([]);
         const loose = await dist(join(await tempDir(), "dist"));
         const [none] = await bundleDesktop({
             contentDir: loose,
@@ -270,6 +224,8 @@ describe("bundle with mods and DLC", () => {
         });
         expect(none?.mods).toBeNull();
         expect(none?.warnings.join("\n")).toContain("no mod or DLC support");
+        const identity = join(tmp, "out3", "roves-game", "game", "roves-game.json");
+        expect(await stat(identity).catch(() => null)).toBeNull();
     });
 });
 
@@ -291,7 +247,6 @@ describe("mod init", () => {
             roves: { game: { name: "mygame", version: "^1.5.2" } },
         });
         expect(await readFile(join(tmp, "My Mod", "index.js"), "utf8")).toContain("defineMod");
-        // The new mod packs as it is.
         await expect(
             packMod({ modDir: join(tmp, "My Mod"), outDir: join(tmp, "packed") }),
         ).resolves.toBeTruthy();
