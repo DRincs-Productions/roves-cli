@@ -79,7 +79,9 @@ root on macOS) and the unzipped `<name>/` (`<name>.app`); several platforms give
 `roves bundle` writes `game/roves-game.json` from the game's `package.json` (found above the
 content dir, or `--project-dir`): its `name` and `version` (what add-ons are checked against),
 whether mods are allowed (`roves.mods`, or `--no-mods`), the libraries the game shares
-(`roves.shared`) and the official DLC from the project's `roves-dlc.json`. Without a
+(entry chunks named after the game's `dependencies`, e.g. `assets/pixi.js-<hash>.js`, made
+with `preserveEntrySignatures: "strict"`; a warning names single-instance libraries without
+one) and the official DLC from the project's `roves-dlc.json`. Without a
 `package.json` the package has no mod or DLC support (a warning). The player loads add-ons from
 player v0.9.2: it lists a DLC only when its `.rovesmod` file is the registered build (same
 SHA-256), and enables it by default; with the same id twice, the highest version wins.

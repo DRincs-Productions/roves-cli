@@ -33,6 +33,7 @@ import { RovesError } from "./errors";
 import { resolveProjectIcon } from "./icon";
 import {
     addonFileName,
+    detectSharedLibraries,
     findProjectDir,
     GAME_IDENTITY_FILE,
     type GameIdentity,
@@ -304,10 +305,14 @@ async function prepareAddons(
         };
     }
     const identity = await readGameIdentity(projectDir, { mods: options.mods });
+    const detected = await detectSharedLibraries(projectDir, contentDir);
+    identity.shared = detected.shared;
+    const sharedNames = Object.entries(identity.shared).map(([lib, s]) => `${lib}@${s.version}`);
     log(
-        `mods: ${GAME_IDENTITY_FILE} ${identity.name}@${identity.version} mods=${identity.mods} official-dlc=${Object.keys(identity.dlc).length}`,
+        `mods: ${GAME_IDENTITY_FILE} ${identity.name}@${identity.version} mods=${identity.mods} official-dlc=${Object.keys(identity.dlc).length} shared=[${sharedNames.join(" ")}]`,
     );
-    if (dlcPaths.length === 0) return { identity, dlc: [], warnings: [], cleanup: none };
+    const warnings = detected.warnings;
+    if (dlcPaths.length === 0) return { identity, dlc: [], warnings, cleanup: none };
     if (!options.shellZip && !shellLoadsMods(shellVersion)) {
         throw new RovesError(
             `--dlc needs the player ${MODS_MIN_SHELL} or later (--shell-version ${shellVersion})`,
@@ -335,7 +340,7 @@ async function prepareAddons(
             dlc.push({ name, file });
             log(`dlc: ${manifest.id}@${manifest.version} is an official DLC of this game`);
         }
-        return { identity, dlc, warnings: [], cleanup };
+        return { identity, dlc, warnings, cleanup };
     } catch (error) {
         await cleanup();
         throw error;

@@ -229,6 +229,104 @@ describe("bundle with mods and DLC", () => {
     });
 });
 
+describe("shared libraries", () => {
+    /** A game whose build exposes some libraries as named entry chunks. */
+    async function sharingGame(root: string): Promise<string> {
+        await write(
+            root,
+            "package.json",
+            json({
+                name: "mygame",
+                version: "1.5.2",
+                dependencies: {
+                    "pixi.js": "^8.19.0",
+                    "@drincs/pixi-vn": "^1.3.0",
+                    tone: "^15.0.0",
+                    howler: "^2.2.0",
+                    lodash: "^4.17.0",
+                },
+            }),
+        );
+        for (const [lib, version] of [
+            ["pixi.js", "8.19.0"],
+            ["@drincs/pixi-vn", "1.3.4"],
+            ["tone", "15.1.0"],
+            ["howler", "2.2.4"],
+            ["lodash", "4.17.21"],
+        ]) {
+            await write(root, `node_modules/${lib}/package.json`, json({ name: lib, version }));
+        }
+        await dist(join(root, "dist"));
+        // Entry chunks with preserveEntrySignatures "strict": the public API.
+        await write(
+            root,
+            "dist/assets/pixi.js-DHJl7f-w.js",
+            'import{a as e}from"./lib-B29efWtk.js";export{e as Application,e as Sprite};',
+        );
+        await write(
+            root,
+            "dist/assets/pixi-vn-AbCdEf12.js",
+            "export{x as canvas,y as narration};export default z;",
+        );
+        // A manualChunks chunk: a few minified internal names only.
+        await write(root, "dist/assets/tone-Q1w2E3r4.js", "export{a as n,b as t};");
+        return root;
+    }
+
+    it("finds the entry chunks named after the libraries and writes them to the game identity", async () => {
+        const tmp = await tempDir();
+        const project = await sharingGame(join(tmp, "game"));
+        const [result] = await bundleDesktop({
+            contentDir: join(project, "dist"),
+            platforms: ["linux"],
+            shellZip: await linuxBase(tmp),
+            outDir: join(tmp, "out"),
+        });
+        const identity = JSON.parse(
+            await readFile(join(tmp, "out", "roves-game", "game", "roves-game.json"), "utf8"),
+        );
+        expect(identity.shared).toEqual({
+            "pixi.js": { version: "8.19.0", file: "assets/pixi.js-DHJl7f-w.js", default: false },
+            "@drincs/pixi-vn": {
+                version: "1.3.4",
+                file: "assets/pixi-vn-AbCdEf12.js",
+                default: true,
+            },
+        });
+        const warnings = result?.warnings.join("\n") ?? "";
+        // tone: made with manualChunks; howler: single-instance library without a chunk.
+        expect(warnings).toContain("tone: assets/tone-Q1w2E3r4.js only exports internal names");
+        expect(warnings).toContain("howler is not shared with mods");
+        // lodash can be bundled by mods: no warning.
+        expect(warnings).not.toContain("lodash");
+
+        // mod check uses the shared versions.
+        const mod = await modFolder(join(tmp, "mod"), {
+            peerDependencies: { "pixi.js": "^8.0.0", "@drincs/pixi-vn": "^2.0.0" },
+        });
+        const checked = await checkMod({ mod, game: result?.bundleDir as string });
+        expect(checked.problems).toEqual([
+            "needs library @drincs/pixi-vn ^2.0.0, the game shares 1.3.4",
+        ]);
+        const created = await initMod({ dir: join(tmp, "new-mod"), game: result?.bundleDir });
+        expect(created.shared).toEqual({ "pixi.js": "8.19.0", "@drincs/pixi-vn": "1.3.4" });
+    });
+
+    it("refuses two chunks named after the same library", async () => {
+        const tmp = await tempDir();
+        const project = await sharingGame(join(tmp, "game"));
+        await write(project, "dist/assets/pixi.js-ZZZZZZZZ.js", "export{a as Application};");
+        await expect(
+            bundleDesktop({
+                contentDir: join(project, "dist"),
+                platforms: ["linux"],
+                shellZip: await linuxBase(tmp),
+                outDir: join(tmp, "out"),
+            }),
+        ).rejects.toThrow(/more than one chunk is named after pixi.js/);
+    });
+});
+
 describe("mod init", () => {
     it("creates a mod for a packaged game, or adds the roves section", async () => {
         const tmp = await tempDir();

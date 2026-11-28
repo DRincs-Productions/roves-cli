@@ -485,6 +485,12 @@ function addModCommands(
             });
             deps.stdout(`${result.manifest}\n`);
             if (result.created.length) log(`created ${result.created.join(", ")}`);
+            const shared = Object.entries(result.shared);
+            if (shared.length) {
+                log(
+                    `the game shares: ${shared.map(([lib, v]) => `${lib}@${v}`).join(", ")} (to use one, add it to peerDependencies and mark it external; see the roves-mods skill)`,
+                );
+            }
         });
     mod.command("dev")
         .description(

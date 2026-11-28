@@ -46,7 +46,57 @@ export interface GameIdentity {
     mods: boolean;
     /** Official DLC: id -> version -> SHA-256 of the `.rovesmod`. */
     dlc: DlcRegistry;
-    shared: Record<string, string>;
+    /** Libraries the game exposes to add-ons (see {@link detectSharedLibraries}). */
+    shared: Record<string, SharedLibrary>;
+}
+
+/** A library the game built as its own named entry chunk, for add-ons to import. */
+export interface SharedLibrary {
+    /** The installed version (from `node_modules/<lib>/package.json`). */
+    version: string;
+    /** The chunk, relative to the game root (`assets/pixi.js-DHJl7f-w.js`). */
+    file: string;
+    /** Whether the chunk has a default export. */
+    default: boolean;
+}
+
+/**
+ * Libraries that must run as one instance per page (global state, registries, one WebGL or
+ * audio context, `instanceof` across modules): an add-on with its own copy breaks the game.
+ * Matched by exact name or, for entries ending in `/`, by scope prefix.
+ */
+export const SINGLE_INSTANCE_LIBRARIES = [
+    "pixi.js",
+    "@pixi/",
+    "@drincs/pixi-vn",
+    "phaser",
+    "three",
+    "@babylonjs/core",
+    "excalibur",
+    "kaboom",
+    "kaplay",
+    "matter-js",
+    "planck",
+    "tone",
+    "howler",
+    "motion",
+    "framer-motion",
+    "gsap",
+    "react",
+    "react-dom",
+    "vue",
+    "solid-js",
+];
+
+export function isSingleInstanceLibrary(name: string): boolean {
+    return SINGLE_INSTANCE_LIBRARIES.some((lib) =>
+        lib.endsWith("/") ? name.startsWith(lib) : name === lib,
+    );
+}
+
+/** The chunk name a library is exposed under: the package name without its scope. */
+export function sharedChunkName(lib: string): string {
+    return lib.startsWith("@") ? (lib.split("/")[1] ?? lib) : lib;
 }
 
 export interface AddonManifest {
@@ -164,8 +214,9 @@ export async function findProjectDir(start: string): Promise<string | undefined>
 }
 
 /**
- * The game identity from the game's `package.json` (`name`, `version`, `roves.mods`,
- * `roves.shared`) and its `roves-dlc.json`; `mods` overrides `roves.mods` (default true).
+ * The game identity from the game's `package.json` (`name`, `version`, `roves.mods`)
+ * and its `roves-dlc.json`; `mods` overrides `roves.mods` (default true). `shared` is filled by
+ * {@link detectSharedLibraries} from the build.
  */
 export async function readGameIdentity(
     projectDir: string,
@@ -185,20 +236,86 @@ export async function readGameIdentity(
     if (!semver.valid(version)) {
         throw new RovesError(`${path}: "version" ${JSON.stringify(version)} is not semver`);
     }
-    const shared = stringMap(roves.shared);
-    for (const [lib, exact] of Object.entries(shared)) {
-        if (!semver.valid(exact)) {
-            throw new RovesError(`${path}: "roves.shared".${lib} must be an exact version`);
-        }
-    }
     return {
         format: GAME_IDENTITY_FORMAT,
         name,
         version,
         mods: options.mods ?? (roves.mods === undefined ? true : roves.mods !== false),
         dlc: await readDlcRegistry(projectDir),
-        shared,
+        shared: {},
     };
+}
+
+/** Names a chunk exports (`export { a as B, c }` statements). */
+function exportedNames(code: string): string[] {
+    const names: string[] = [];
+    for (const match of code.matchAll(/export\s*\{([^}]*)\}/g)) {
+        for (const part of (match[1] ?? "").split(",")) {
+            const name = part
+                .trim()
+                .split(/\s+as\s+/)
+                .pop()
+                ?.trim();
+            if (name) names.push(name);
+        }
+    }
+    if (/export\s+default\b/.test(code)) names.push("default");
+    return names;
+}
+
+/**
+ * The libraries the game exposes to add-ons. Roves does not change the build: the developer
+ * gives each library to share its own entry chunk named after the package without its scope
+ * (`pixi.js` -> `assets/pixi.js-<hash>.js`, `@drincs/pixi-vn` -> `assets/pixi-vn-<hash>.js`),
+ * with `preserveEntrySignatures: "strict"` so the chunk exports the library's public API. For
+ * every `dependencies` entry of the game's `package.json` this finds that chunk in the build.
+ * A chunk made with `manualChunks` only exports a few minified internal names: it is refused
+ * with a warning, as is a missing chunk of a library that must run as a single instance.
+ */
+export async function detectSharedLibraries(
+    projectDir: string,
+    contentDir: string,
+): Promise<{ shared: Record<string, SharedLibrary>; warnings: string[] }> {
+    const json = await readJson(join(projectDir, ADDON_MANIFEST));
+    const dependencies = Object.keys(stringMap(json.dependencies));
+    const files = (await walkDirectory(contentDir)).filter((rel) => rel.endsWith(".js"));
+    const shared: Record<string, SharedLibrary> = {};
+    const warnings: string[] = [];
+    for (const lib of dependencies) {
+        const chunk = sharedChunkName(lib);
+        const escaped = chunk.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = new RegExp(`^${escaped}(-[A-Za-z0-9_-]{8})?\\.js$`);
+        const candidates = files.filter((rel) => pattern.test(rel.split("/").pop() ?? ""));
+        if (candidates.length === 0) {
+            if (isSingleInstanceLibrary(lib)) {
+                warnings.push(
+                    `${lib} is not shared with mods (no "${chunk}" entry chunk): a mod that uses it would load a second copy, which breaks the game. See the roves-mods skill or the wiki "Mods and DLC".`,
+                );
+            }
+            continue;
+        }
+        if (candidates.length > 1) {
+            throw new RovesError(
+                `more than one chunk is named after ${lib}: ${candidates.join(", ")} (build it once, as an entry with preserveEntrySignatures "strict", not also in manualChunks)`,
+            );
+        }
+        const file = candidates[0] as string;
+        const names = exportedNames(await readFile(join(contentDir, file), "utf8"));
+        if (names.filter((n) => n !== "default").every((n) => n.length <= 2)) {
+            warnings.push(
+                `${lib}: ${file} only exports internal names (${names.join(", ") || "none"}), so it is not shared. Build it as an entry chunk with preserveEntrySignatures "strict" instead of manualChunks.`,
+            );
+            continue;
+        }
+        const installed = await readJson(
+            join(projectDir, "node_modules", lib, ADDON_MANIFEST),
+        ).catch(() => undefined);
+        if (typeof installed?.version !== "string" || !semver.valid(installed.version)) {
+            throw new RovesError(`${lib} is not installed in ${projectDir} (run npm install)`);
+        }
+        shared[lib] = { version: installed.version, file, default: names.includes("default") };
+    }
+    return { shared, warnings };
 }
 
 /** `v0.9.2` >= `v0.9.2`; pre-release suffixes are ignored. */
@@ -565,7 +682,8 @@ export async function checkMod(options: { mod: string; game: string }): Promise<
             );
         }
         for (const [lib, range] of Object.entries(manifest.peer)) {
-            const shared = identity.shared?.[lib];
+            const entry = identity.shared?.[lib] as SharedLibrary | string | undefined;
+            const shared = typeof entry === "string" ? entry : entry?.version;
             if (!shared || !semver.satisfies(shared, range)) {
                 problems.push(
                     `needs library ${lib} ${range}, ${shared ? `the game shares ${shared}` : "not shared by the game"}`,
@@ -652,6 +770,8 @@ export interface InitModOptions {
 export interface InitModResult {
     manifest: string;
     created: string[];
+    /** Libraries the game shares (from `--game`): name -> version, for `peerDependencies`. */
+    shared: Record<string, string>;
 }
 
 const STARTER_MAIN = `import { defineMod } from "@drincs/roves-api/mods";
@@ -674,6 +794,7 @@ export async function initMod(options: InitModOptions): Promise<InitModResult> {
     const existing = await readJson(manifestPath).catch(() => undefined);
     let gameName = options.gameName;
     let gameRange = "*";
+    const shared: Record<string, string> = {};
     if (options.game) {
         const game = await findPackagedGame(options.game);
         if (!game.identity) {
@@ -683,6 +804,10 @@ export async function initMod(options: InitModOptions): Promise<InitModResult> {
         }
         gameName = game.identity.name;
         gameRange = `^${game.identity.version}`;
+        for (const [lib, entry] of Object.entries(game.identity.shared ?? {})) {
+            const version = typeof entry === "string" ? entry : entry.version;
+            shared[lib] = version;
+        }
     }
     if (!gameName)
         throw new RovesError("name the game: --game <unzipped package> or --game-name <name>");
@@ -722,7 +847,7 @@ export async function initMod(options: InitModOptions): Promise<InitModResult> {
         await mkdir(join(dir, "overrides"), { recursive: true });
         created.push("overrides/");
     }
-    return { manifest: manifestPath, created };
+    return { manifest: manifestPath, created, shared };
 }
 
 // ---------------------------------------------------------------- dev
